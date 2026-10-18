@@ -3,1038 +3,946 @@ const P = window.Phaser;
 const loading = document.getElementById("loading");
 
 if (!P) {
-  if (loading) loading.textContent = "Phaser unavailable";
+  if (loading) loading.textContent = "Phaser failed";
   throw new Error("Phaser unavailable");
 }
 
-const WORLD_W = 1920;
-const WORLD_H = 1440;
-const SPEED = 220;
-const TAU = Math.PI * 2;
+const VW = 1920, VH = 1440;
+const HERO_SPEED = 215;
+const DIRS = [
+  [1,0],[1,1],[0,1],[-1,1],
+  [-1,0],[-1,-1],[0,-1],[1,-1]
+];
 
-class ForestRPG extends P.Scene {
+class QuarterRPG extends P.Scene {
   constructor() {
-    super("ForestRPG");
+    super("QuarterRPG");
   }
 
   create() {
     if (loading) loading.remove();
 
-    this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
-    this.cameras.main.setBackgroundColor("#203f35");
+    this.physics.world.setBounds(0,0,VW,VH);
+    this.cameras.main.setBackgroundColor("#254737");
 
     this.gold = 0;
     this.gems = 0;
-    this.exp = 0;
-    this.level = 1;
     this.kills = 0;
+    this.level = 1;
+    this.exp = 0;
     this.hp = 100;
-    this.maxHp = 100;
     this.monsters = [];
     this.drops = [];
-    this.move = { x: 0, y: 0 };
-    this.facing = { x: 1, y: 0.35 };
-    this.joyId = null;
+    this.fx = [];
+    this.move = {x:0,y:0};
+    this.direction = 0;
+    this.joyPointer = null;
+    this.attackPointer = null;
     this.attackHeld = false;
     this.lastAttack = 0;
+    this.lastSkill = -9999;
     this.lastSpawn = 0;
-    this.lastHud = 0;
-    this.quality = 1;
-    this.fpsAverage = 60;
+    this.lastHUD = 0;
+    this.fps = 60;
 
-    this.createTextures();
-    this.createWorld();
+    this.makeArt();
+    this.makeMap();
 
-    this.player = this.createActor(920, 690, "hero");
+    this.player = this.actor(920,700,"hero");
 
-    for (let i = 0; i < 11; i++) {
-      this.spawnMonster();
-    }
+    for(let i=0;i<11;i++) this.spawnMonster();
 
     this.cameras.main
-      .setBounds(0, 0, WORLD_W, WORLD_H)
-      .startFollow(this.player.sprite, true, 0.12, 0.12);
+      .setBounds(0,0,VW,VH)
+      .startFollow(this.player.sprite,true,0.13,0.13)
+      .setRoundPixels(true);
 
-    this.cameras.main.setRoundPixels(true);
+    this.makeUI();
+    this.makeControls();
 
-    this.createUI();
-    this.createControls();
-
-    this.scale.on("resize", this.layoutUI, this);
-    this.layoutUI();
+    this.scale.on("resize",this.layout,this);
+    this.layout();
   }
 
-  createTextures() {
-    const g = this.make.graphics({ x: 0, y: 0 });
+  // All pixel artwork is drawn once into textures.
+  makeArt() {
+    const g = this.make.graphics({x:0,y:0});
 
-    const rect = (x, y, w, h, c) => {
+    const r = (x,y,w,h,c) => {
       g.fillStyle(c);
-      g.fillRect(x * 3, y * 3, w * 3, h * 3);
+      g.fillRect(x*3,y*3,w*3,h*3);
     };
 
-    const save = (name, w, h) => {
-      g.generateTexture(name, w * 3, h * 3);
+    const save = (name,w,h) => {
+      g.generateTexture(name,w*3,h*3);
       g.clear();
     };
 
-    // Hero: brown hair, blue armor, red scarf
-    for (let f = 0; f < 4; f++) {
-      const step = f === 1 ? 1 : f === 3 ? -1 : 0;
+    // Detailed hero: 8 directions, 4 walking frames.
+    for(let d=0;d<8;d++){
+      for(let f=0;f<4;f++){
+        const step = [0,1,0,-1][f];
+        const side = d===0||d===1||d===7;
+        const left = d>=3&&d<=5;
+        const back = d>=5;
+        const sx = side ? 1 : left ? -1 : 0;
 
-      // Boots
-      rect(8, 25, 6, 7, 0x101e32);
-      rect(17, 25, 6, 7, 0x101e32);
-      rect(8, 30 + step, 7, 3, 0x253c59);
-      rect(17, 30 - step, 7, 3, 0x253c59);
+        // Legs and boots
+        r(12,30,6,10,0x101a30);
+        r(22,30,6,10,0x101a30);
+        r(11,38+step,8,4,0x263c59);
+        r(21,38-step,8,4,0x263c59);
+        r(12,34,5,3,0x435b76);
+        r(23,34,5,3,0x435b76);
 
-      // Armor
-      rect(6, 14, 20, 13, 0x13243a);
-      rect(8, 15, 17, 11, 0x24639b);
-      rect(10, 16, 9, 5, 0x4aa4db);
-      rect(8, 23, 17, 3, 0x152d4b);
+        // Cape and armor outline
+        r(9,18,24,17,0x111b2c);
+        r(7,22,5,15,0x982d34);
+        r(6-step,27,6,11,0xcb3d3e);
+        r(10,19,22,15,0x28476a);
+        r(12,20,18,12,0x276caa);
+        r(14,21,11,5,0x55b5e5);
+        r(13,28,16,3,0x17304c);
+        r(17,29,4,3,0xe2b45d);
 
-      // Arms
-      rect(4, 16, 5, 11, 0x293f58);
-      rect(25, 16, 5, 11, 0x293f58);
-      rect(4, 20, 5, 5, 0xe3ae7b);
-      rect(25, 20, 5, 5, 0xe3ae7b);
+        // Metal shoulders
+        r(7,19,7,8,0x182b43);
+        r(8,20,5,5,0x819eb7);
+        r(29,19,7,8,0x182b43);
+        r(30,20,5,5,0x819eb7);
+        r(8,25,5,7,0xc79269);
+        r(30,25,5,7,0xc79269);
 
-      // Head
-      rect(9, 4, 17, 13, 0x3c2b28);
-      rect(10, 6, 15, 11, 0xf0bb89);
-      rect(9, 3, 16, 6, 0x543627);
-      rect(7, 6, 7, 4, 0x69412a);
-      rect(19, 10, 2, 2, 0x182333);
-      rect(24, 10, 2, 2, 0x182333);
+        // Head
+        r(12+sx,5,19,16,0x362822);
+        r(13+sx,7,17,14,0xe9b17f);
+        r(12+sx,4,19,7,0x573724);
+        r(9+sx,7,7,5,0x67402a);
+        r(15+sx,3,10,3,0x775038);
+        r(22+sx,4,8,4,0x493021);
 
-      // Red scarf
-      rect(7, 14, 19, 3, 0xb52d35);
-      rect(3 - step, 16, 7, 3, 0xd3423e);
-      rect(1 - step, 18, 6, 2, 0x8f252f);
+        if(back){
+          r(14+sx,10,16,8,0x6c442e);
+          r(16+sx,13,11,3,0x8b5c3b);
+        } else if(side){
+          const eyeX = left ? 16 : 27;
+          r(eyeX,13,2,2,0x14263a);
+          r(eyeX,16,3,1,0xb97859);
+        } else {
+          r(17,13,2,2,0x152538);
+          r(26,13,2,2,0x152538);
+        }
 
-      // Sword
-      rect(29, 16, 3, 13, 0x77502b);
-      rect(27, 16, 7, 2, 0xf0bf5d);
-      rect(29, 3, 4, 13, 0x8dcde4);
-      rect(30, 1, 2, 3, 0xffffff);
+        // Signature red scarf
+        r(11,19,22,4,0x92252c);
+        r(13,19,19,3,0xe04b45);
+        r(7-step,22,8,3,0xd83a40);
+        r(4-step,24,7,2,0x9d2632);
 
-      save("hero" + f, 36, 35);
+        // Sword and golden guard
+        const swordX = left ? 4 : 36;
+        r(swordX,21,3,13,0x6d492c);
+        r(swordX-2,19,7,3,0xf3c45e);
+        r(swordX,6,4,14,0x8cbcd6);
+        r(swordX+1,3,2,4,0xe6faff);
+        r(swordX,8,1,9,0xffffff);
+
+        save("hero_"+d+"_"+f,44,44);
+      }
     }
 
-    // Slime
-    for (let f = 0; f < 4; f++) {
-      const b = f % 2;
-
-      rect(3, 13 + b, 20, 8, 0x183d30);
-      rect(4, 10 + b, 18, 10, 0x328e52);
-      rect(6, 6 + b, 14, 12, 0x5fc975);
-      rect(9, 5 + b, 9, 6, 0x8be998);
-      rect(8, 13 + b, 3, 3, 0x162c2b);
-      rect(17, 13 + b, 3, 3, 0x162c2b);
-      rect(10, 17 + b, 8, 2, 0x348b53);
-      rect(7, 10 + b, 3, 2, 0xc0ffb3);
-
-      save("slime" + f, 27, 24);
+    // Slime frames
+    for(let f=0;f<4;f++){
+      const b = f%2;
+      r(4,15+b,24,9,0x153c2d);
+      r(5,11+b,22,12,0x237c49);
+      r(7,7+b,18,13,0x4dbb69);
+      r(10,5+b,13,10,0x7ce08a);
+      r(10,8+b,7,3,0xb5f6a5);
+      r(10,16+b,3,4,0x172e2b);
+      r(22,16+b,3,4,0x172e2b);
+      r(16,21+b,5,2,0x327d4b);
+      r(8,13+b,3,2,0xd3ffbf);
+      save("slime_"+f,33,27);
     }
 
-    // Boar
-    for (let f = 0; f < 4; f++) {
-      const b = f % 2;
-
-      rect(4, 11, 21, 13, 0x37251e);
-      rect(5, 9, 19, 13, 0x825333);
-      rect(7, 7, 14, 7, 0xa06a40);
-      rect(2, 12, 9, 9, 0x8b5737);
-      rect(1, 15, 7, 5, 0xb87951);
-      rect(4, 13, 2, 2, 0x141b21);
-      rect(7, 18, 3, 3, 0xf0d7a6);
-      rect(19, 7, 5, 6, 0x5d3428);
-      rect(9, 22, 4, 6 + b, 0x382820);
-      rect(20, 22, 4, 6 - b, 0x382820);
-
-      save("boar" + f, 29, 30);
+    // Wild boar frames
+    for(let f=0;f<4;f++){
+      const b=f%2;
+      r(7,13,25,14,0x38271f);
+      r(8,11,23,14,0x875638);
+      r(11,9,18,7,0xb47a4d);
+      r(3,15,12,11,0x573726);
+      r(3,17,10,8,0xaa7048);
+      r(1,20,9,5,0xc28b5e);
+      r(7,17,3,3,0x18232b);
+      r(10,24,4,3,0xffe4b5);
+      r(26,8,6,8,0x533328);
+      r(11,26,5,8+b,0x302720);
+      r(25,26,5,8-b,0x302720);
+      r(33,15,4,3,0x68402c);
+      save("boar_"+f,39,36);
     }
 
-    // Coin
-    rect(3, 0, 6, 2, 0xffe78a);
-    rect(1, 2, 10, 8, 0xb97925);
-    rect(2, 1, 8, 9, 0xffcf4c);
-    rect(4, 3, 4, 5, 0xffef9d);
-    save("coin", 12, 12);
+    // Gold coin
+    r(3,1,8,2,0xffe68a);
+    r(1,3,12,9,0x92541e);
+    r(2,2,10,10,0xf9bf3f);
+    r(4,4,6,6,0xffe786);
+    r(6,5,2,4,0xe6a62b);
+    save("coin",14,14);
 
-    // Crystal
-    rect(5, 0, 2, 2, 0xd6faff);
-    rect(3, 2, 6, 3, 0x70d9ff);
-    rect(1, 5, 10, 3, 0x278fd3);
-    rect(3, 8, 6, 3, 0x1c5fa5);
-    rect(5, 11, 2, 1, 0xa8f4ff);
-    save("gem", 12, 12);
+    // Mana crystal
+    r(6,0,3,3,0xe3fbff);
+    r(4,3,7,4,0x80dcff);
+    r(2,7,11,4,0x258fdb);
+    r(4,11,7,3,0x165b9c);
+    r(6,14,3,2,0x9ae9ff);
+    save("gem",15,16);
 
-    // Tree
-    rect(12, 19, 7, 17, 0x473226);
-    rect(14, 19, 3, 16, 0x95603c);
-    rect(5, 12, 23, 14, 0x163b2f);
-    rect(3, 9, 26, 14, 0x235f3e);
-    rect(6, 4, 21, 16, 0x337c4b);
-    rect(10, 2, 15, 12, 0x4d995b);
-    rect(8, 8, 7, 4, 0x6db16b);
-    rect(20, 6, 5, 4, 0x71b96f);
-    save("tree", 33, 37);
+    // Forest tree
+    r(17,30,10,18,0x33291f);
+    r(19,30,6,18,0x98663e);
+    r(21,33,2,13,0xc28c52);
+    r(6,20,32,17,0x133b2e);
+    r(3,14,38,19,0x215b3a);
+    r(7,7,32,22,0x2b7547);
+    r(12,3,23,19,0x408f54);
+    r(17,2,14,11,0x67b765);
+    r(9,13,9,6,0x65b46a);
+    r(28,10,7,5,0x7bc573);
+    r(17,8,7,4,0x9bd382);
+    save("tree",44,49);
 
-    // Stone
-    rect(3, 9, 22, 9, 0x283b43);
-    rect(5, 5, 18, 11, 0x60747d);
-    rect(8, 3, 12, 6, 0x99a7a5);
-    rect(15, 10, 8, 5, 0x40545e);
-    save("rock", 29, 19);
+    // Rock
+    r(3,13,29,11,0x26343c);
+    r(5,8,25,13,0x516772);
+    r(10,4,17,11,0x8499a0);
+    r(12,5,10,4,0xb7c0b4);
+    r(21,15,8,6,0x384a56);
+    r(8,17,7,4,0x48645b);
+    save("rock",36,26);
 
-    // Bush
-    rect(2, 9, 20, 7, 0x1c4b34);
-    rect(4, 5, 17, 10, 0x347e4b);
-    rect(8, 2, 10, 9, 0x60a766);
-    rect(5, 7, 5, 3, 0x8bc27c);
-    save("bush", 25, 18);
+    // Flower bush
+    r(3,12,26,9,0x153c2e);
+    r(5,8,23,11,0x286c42);
+    r(9,4,16,11,0x4c9a55);
+    r(13,5,7,5,0x80c26e);
+    r(7,11,3,3,0xf9df7b);
+    r(22,9,3,3,0xffa8bf);
+    r(16,3,3,3,0xffffff);
+    save("bush",33,23);
 
     // Wooden chest
-    rect(2, 7, 22, 14, 0x35251d);
-    rect(3, 5, 20, 14, 0x84522e);
-    rect(4, 7, 18, 4, 0xc18b49);
-    rect(5, 13, 16, 2, 0x51321f);
-    rect(11, 10, 4, 7, 0xffcf61);
-    save("chest", 27, 23);
+    r(3,9,27,15,0x34251c);
+    r(4,7,25,15,0x84502d);
+    r(5,8,23,5,0xb88044);
+    r(7,14,19,2,0x4d2e1d);
+    r(6,18,21,2,0x9f6d37);
+    r(14,12,5,8,0xe9b84c);
+    r(15,14,3,4,0xffe38b);
+    save("chest",34,26);
+
+    // Lamp
+    r(15,20,6,25,0x3b2b22);
+    r(17,20,3,24,0x91653a);
+    r(8,14,20,4,0x483126);
+    r(11,6,14,12,0x4d3527);
+    r(13,8,10,8,0xffc75e);
+    r(15,9,6,6,0xfff0a2);
+    r(10,4,16,4,0x34291f);
+    save("lamp",36,47);
 
     g.destroy();
   }
 
-  createWorld() {
-    const g = this.add.graphics().setDepth(-10000);
+  makeMap() {
+    const g=this.add.graphics().setDepth(-10000);
 
-    g.fillStyle(0x2f6348);
-    g.fillRect(0, 0, WORLD_W, WORLD_H);
+    g.fillStyle(0x345d41);
+    g.fillRect(0,0,VW,VH);
 
-    // Grass patches
-    for (let i = 0; i < 1700; i++) {
-      const x = P.Math.Between(0, WORLD_W);
-      const y = P.Math.Between(0, WORLD_H);
-
+    // Detailed ground variation
+    for(let i=0;i<2200;i++){
+      const x=P.Math.Between(0,VW);
+      const y=P.Math.Between(0,VH);
       g.fillStyle(
-        i % 3 === 0 ? 0x75a963 : 0x427b4b,
+        i%4===0?0x77a568:
+        i%4===1?0x26553b:
+        i%4===2?0x588a53:0x46754b,
         0.65
       );
-      g.fillRect(x, y, 4, 3);
+      g.fillRect(x,y,P.Math.Between(3,9),3);
     }
 
-    // Main road
-    g.fillStyle(0x665c40);
-    g.fillEllipse(950, 750, 1540, 350);
+    // Forest path
+    g.fillStyle(0x554d35);
+    g.fillEllipse(920,740,1640,385);
+    g.fillStyle(0x957b4e);
+    g.fillEllipse(920,734,1590,326);
+    g.fillStyle(0xb79a65,0.55);
+    g.fillEllipse(920,730,1500,265);
 
-    g.fillStyle(0x9b8355);
-    g.fillEllipse(950, 745, 1480, 285);
+    // River
+    g.fillStyle(0x142f47);
+    g.fillRect(1320,0,340,600);
+    g.fillStyle(0x2478a4);
+    g.fillRect(1330,0,320,590);
 
-    g.fillStyle(0xb29a68, 0.5);
-    g.fillEllipse(950, 735, 1330, 210);
-
-    // River on upper-right side
-    g.fillStyle(0x173e59);
-    g.fillRect(1280, 0, 330, 570);
-
-    g.fillStyle(0x2479a5);
-    g.fillRect(1295, 0, 300, 560);
-
-    for (let i = 0; i < 130; i++) {
-      const x = P.Math.Between(1300, 1590);
-      const y = P.Math.Between(0, 560);
-
-      g.fillStyle(0x91ddf4, 0.45);
-      g.fillRect(x, y, P.Math.Between(8, 25), 3);
+    for(let i=0;i<150;i++){
+      const x=P.Math.Between(1335,1640);
+      const y=P.Math.Between(0,590);
+      g.fillStyle(0x9ae9f5,0.35);
+      g.fillRect(x,y,P.Math.Between(8,26),3);
     }
 
-    // Wooden bridge
-    g.fillStyle(0x392c25);
-    g.fillRect(1240, 245, 410, 115);
+    // Waterfall
+    g.fillStyle(0x8ee7ff,0.75);
+    g.fillRect(1400,12,150,80);
+    g.fillStyle(0xd5f9ff,0.8);
+    for(let i=0;i<12;i++){
+      g.fillRect(1405+i*12,20,5,72);
+    }
 
-    for (let x = 1250; x < 1640; x += 26) {
+    // Bridge
+    g.fillStyle(0x3a291f);
+    g.fillRect(1270,265,430,128);
+    for(let x=1280;x<1690;x+=28){
       g.fillStyle(
-        x % 3 ? 0x96623b : 0xb78048
+        (x/28)%2?0x96643c:0xb7814a
       );
-      g.fillRect(x, 255, 23, 93);
-
-      g.fillStyle(0x503728);
-      g.fillRect(x, 255, 3, 93);
+      g.fillRect(x,273,25,111);
+      g.fillStyle(0x493325);
+      g.fillRect(x,273,3,111);
     }
 
-    // Decorative pebbles
-    for (let i = 0; i < 160; i++) {
-      const x = P.Math.Between(250, 1650);
-      const y = P.Math.Between(660, 840);
-
-      g.fillStyle(0x625d4d, 0.45);
-      g.fillEllipse(x, y, 8, 4);
+    // Stones on the path
+    for(let i=0;i<180;i++){
+      const x=P.Math.Between(200,1650);
+      const y=P.Math.Between(650,825);
+      g.fillStyle(0x6d6650,0.45);
+      g.fillEllipse(x,y,8,4);
     }
 
-    // Static scenery
-    for (let i = 0; i < 105; i++) {
-      const x = P.Math.Between(50, WORLD_W - 50);
-      const y = P.Math.Between(55, WORLD_H - 55);
+    // Scenery: depth follows bottom position
+    for(let i=0;i<125;i++){
+      const x=P.Math.Between(60,VW-60);
+      const y=P.Math.Between(60,VH-60);
 
-      if (Math.hypot(x - 920, y - 690) < 240) {
-        continue;
-      }
+      if(Math.hypot(x-920,y-700)<240) continue;
+      if(x>1310&&x<1670&&y<610) continue;
 
-      if (
-        x > 1270 && x < 1620 &&
-        y < 570
-      ) continue;
+      const n=P.Math.Between(0,9);
+      const type=n<5?"tree":n<8?"bush":"rock";
+      const scale=type==="tree"
+        ?P.Math.FloatBetween(0.85,1.15):1;
 
-      const r = P.Math.Between(0, 9);
-      const type = r < 5 ? "tree"
-        : r < 8 ? "bush" : "rock";
+      this.add.ellipse(
+        x,y,type==="tree"?80:46,16,
+        0x0a261c,0.35
+      ).setDepth(y-1);
 
-      const shadow = this.add.ellipse(
-        x, y, type === "tree" ? 65 : 40,
-        13, 0x0b281f, 0.4
-      ).setDepth(y - 1);
-
-      const obj = this.add.image(x, y, type)
-        .setOrigin(0.5, 1)
+      this.add.image(x,y,type)
+        .setOrigin(0.5,1)
+        .setScale(scale)
         .setDepth(y);
-
-      if (type === "tree") {
-        obj.setScale(P.Math.FloatBetween(0.9, 1.25));
-      }
-
-      shadow.setScale(obj.scaleX, 1);
     }
 
-    // Treasure chest
-    this.add.image(1050, 520, "chest")
-      .setOrigin(0.5, 1)
-      .setDepth(520);
+    this.add.image(1090,530,"chest")
+      .setOrigin(0.5,1).setDepth(530);
 
-    // Lantern posts
-    this.makeLantern(1170, 510);
-    this.makeLantern(1640, 380);
+    for(const [x,y] of [[1200,550],[1700,425]]){
+      this.add.ellipse(
+        x,y-100,100,45,0xffc35b,0.12
+      ).setDepth(y-1);
+
+      this.add.image(x,y,"lamp")
+        .setOrigin(0.5,1).setDepth(y);
+    }
   }
 
-  makeLantern(x, y) {
-    const g = this.add.graphics().setDepth(y);
+  actor(x,y,type) {
+    const hero=type==="hero";
+    const tex=hero?"hero_0_0":type+"_0";
 
-    g.fillStyle(0x493426);
-    g.fillRect(x - 7, y - 95, 14, 95);
+    const shadow=this.add.ellipse(
+      x,y,hero?52:55,14,0x081e19,0.42
+    ).setDepth(y-1);
 
-    g.fillStyle(0x9a693b);
-    g.fillRect(x - 5, y - 95, 5, 95);
-
-    g.fillStyle(0x382b24);
-    g.fillRect(x - 20, y - 104, 40, 8);
-
-    g.fillStyle(0xffd26b);
-    g.fillRect(x - 14, y - 130, 28, 25);
-
-    g.fillStyle(0xfff1a1);
-    g.fillRect(x - 8, y - 125, 16, 15);
-
-    g.fillStyle(0x483126);
-    g.fillRect(x - 17, y - 134, 34, 6);
-
-    this.add.circle(
-      x, y - 118, 42, 0xffc65a, 0.12
-    ).setDepth(y + 1);
-  }
-
-  createActor(x, y, type) {
-    const hero = type === "hero";
-
-    const shadow = this.add.ellipse(
-      x, y, hero ? 46 : 50,
-      13, 0x061d19, 0.4
-    ).setDepth(y - 1);
-
-    const sprite = this.physics.add.sprite(
-      x, y, type + "0"
-    ).setOrigin(0.5, 1);
+    const sprite=this.physics.add.sprite(
+      x,y,tex
+    ).setOrigin(0.5,1);
 
     sprite.setDepth(y);
     sprite.setCollideWorldBounds(true);
 
-    const bodyW = hero ? 30 : 35;
-    const bodyH = 14;
-
-    sprite.body.setSize(bodyW, bodyH);
+    const bw=hero?34:40;
+    sprite.body.setSize(bw,14);
     sprite.body.setOffset(
-      (sprite.width - bodyW) / 2,
-      sprite.height - bodyH
+      (sprite.width-bw)/2,
+      sprite.height-14
     );
 
-    const bar = this.add.graphics();
-
     return {
-      sprite,
-      shadow,
-      bar,
-      type,
-      hp: hero ? 100 : type === "boar" ? 85 : 45,
-      maxHp: hero ? 100 : type === "boar" ? 85 : 45,
-      lastHit: 0,
-      lastFrame: 0,
-      frame: 0,
-      speed: type === "boar" ? 108 : 86
+      type,sprite,shadow,
+      bar:this.add.graphics(),
+      hp:hero?100:type==="boar"?85:45,
+      maxHp:hero?100:type==="boar"?85:45,
+      frame:0,lastFrame:0,lastHit:0,
+      speed:type==="boar"?110:86
     };
   }
 
   spawnMonster() {
-    const x = P.Math.Between(100, WORLD_W - 100);
-    const y = P.Math.Between(100, WORLD_H - 100);
+    const x=P.Math.Between(90,VW-90);
+    const y=P.Math.Between(90,VH-90);
 
-    if (
-      Math.hypot(
-        x - this.player.sprite.x,
-        y - this.player.sprite.y
-      ) < 240
-    ) return;
-
-    const type = Math.random() < 0.24
-      ? "boar" : "slime";
+    if(Math.hypot(
+      x-this.player.sprite.x,
+      y-this.player.sprite.y
+    )<240) return;
 
     this.monsters.push(
-      this.createActor(x, y, type)
+      this.actor(
+        x,y,
+        Math.random()<0.25?"boar":"slime"
+      )
     );
   }
 
-  createUI() {
-    const ui = d => d
+  makeUI() {
+    const fixed=o=>o
       .setScrollFactor(0)
       .setDepth(20000);
 
-    this.hudBg = ui(this.add.graphics());
+    this.panel=fixed(this.add.graphics());
 
-    this.hud = ui(this.add.text(15, 15, "", {
-      fontFamily: "system-ui",
-      fontSize: "16px",
-      fontStyle: "bold",
-      color: "#ffffff",
-      stroke: "#17202a",
-      strokeThickness: 2
-    }));
+    this.hud=fixed(this.add.text(
+      16,14,"",{
+        fontFamily:"system-ui",
+        fontSize:"14px",
+        fontStyle:"bold",
+        color:"#ffffff"
+      }
+    ));
 
-    this.fpsText = ui(this.add.text(0, 12, "", {
-      fontFamily: "monospace",
-      fontSize: "15px",
-      fontStyle: "bold",
-      color: "#ffdb72",
-      backgroundColor: "#132734dd",
-      padding: { x: 8, y: 6 }
-    }));
+    this.fpsText=fixed(this.add.text(
+      0,14,"FPS 60",{
+        fontFamily:"monospace",
+        fontSize:"15px",
+        fontStyle:"bold",
+        color:"#ffdf79",
+        backgroundColor:"#122637dd",
+        padding:{x:8,y:6}
+      }
+    ));
 
-    this.miniBg = ui(this.add.graphics());
+    this.base=fixed(this.add.circle(
+      90,0,61,0x102b3d,0.7
+    ).setStrokeStyle(3,0xbad5e5,0.7));
 
-    this.base = ui(this.add.circle(
-      90, 0, 61, 0x102b3d, 0.68
-    ).setStrokeStyle(3, 0xc5d8e3, 0.65));
-
-    this.knob = ui(this.add.circle(
-      90, 0, 27, 0xaccfe7, 0.95
+    this.knob=fixed(this.add.circle(
+      90,0,27,0xa9d2ed,0.95
     )).setDepth(20001);
 
-    this.attackButton = ui(this.add.circle(
-      0, 0, 49, 0xb83d27, 0.95
-    ).setStrokeStyle(4, 0xffc35a));
+    this.attackButton=fixed(this.add.circle(
+      0,0,51,0xb53b29,0.96
+    ).setStrokeStyle(4,0xffc86b));
 
-    this.attackLabel = ui(this.add.text(
-      0, 0, "⚔", {
-        fontFamily: "system-ui",
-        fontSize: "34px",
-        color: "#fff3d1"
+    this.attackLabel=fixed(this.add.text(
+      0,0,"⚔",{
+        fontFamily:"system-ui",
+        fontSize:"33px",
+        color:"#fff4d4"
       }
     ).setOrigin(0.5)).setDepth(20001);
 
-    this.skillButton = ui(this.add.circle(
-      0, 0, 30, 0x253b51, 0.95
-    ).setStrokeStyle(3, 0xf4bd62));
+    this.skillButton=fixed(this.add.circle(
+      0,0,31,0x243b54,0.95
+    ).setStrokeStyle(3,0xf0c66b));
 
-    this.skillLabel = ui(this.add.text(
-      0, 0, "✦", {
-        fontFamily: "system-ui",
-        fontSize: "27px",
-        color: "#ffce66"
+    this.skillLabel=fixed(this.add.text(
+      0,0,"✦",{
+        fontSize:"28px",
+        color:"#ffdf8b"
       }
     ).setOrigin(0.5)).setDepth(20001);
-
-    this.lastSkill = 0;
   }
 
-  layoutUI() {
-    const w = this.scale.width;
-    const h = this.scale.height;
-    const small = w < 450;
+  layout() {
+    const w=this.scale.width;
+    const h=this.scale.height;
+    const joyX=w<450?85:110;
+    const joyY=h-100;
+    const atkX=w-(w<450?80:110);
+    const atkY=h-100;
 
-    const joyX = small ? 82 : 105;
-    const joyY = h - (small ? 100 : 110);
-    const atkX = w - (small ? 78 : 100);
-    const atkY = h - (small ? 100 : 110);
-
-    this.base.setPosition(joyX, joyY);
-    this.knob.setPosition(joyX, joyY);
-
-    this.attackButton.setPosition(atkX, atkY);
-    this.attackLabel.setPosition(atkX, atkY);
-
-    this.skillButton.setPosition(atkX - 30, atkY - 105);
-    this.skillLabel.setPosition(atkX - 30, atkY - 105);
-
-    this.fpsText.setPosition(w - 87, 12);
+    this.base.setPosition(joyX,joyY);
+    this.knob.setPosition(joyX,joyY);
+    this.attackButton.setPosition(atkX,atkY);
+    this.attackLabel.setPosition(atkX,atkY);
+    this.skillButton.setPosition(atkX-30,atkY-105);
+    this.skillLabel.setPosition(atkX-30,atkY-105);
+    this.fpsText.setPosition(w-88,12);
   }
 
-  createControls() {
-    this.keys = this.input.keyboard.addKeys(
+  makeControls() {
+    this.keys=this.input.keyboard.addKeys(
       "W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE"
     );
 
     this.input.addPointer(2);
 
-    this.input.on("pointerdown", p => {
-      const w = this.scale.width;
-      const h = this.scale.height;
+    this.input.on("pointerdown",p=>{
+      const w=this.scale.width;
+      const h=this.scale.height;
 
-      if (
-        p.x < w * 0.48 &&
-        p.y > h * 0.4 &&
-        this.joyId === null
-      ) {
-        this.joyId = p.id;
-        this.moveJoystick(p);
-      } else if (
+      if(
+        p.x<w*0.48 &&
+        p.y>h*0.4 &&
+        this.joyPointer===null
+      ){
+        this.joyPointer=p.id;
+        this.joystick(p);
+      } else if(
         P.Math.Distance.Between(
-          p.x, p.y,
+          p.x,p.y,
           this.skillButton.x,
           this.skillButton.y
-        ) < 45
-      ) {
-        this.useSkill(this.time.now);
-      } else if (
-        p.x > w * 0.52 &&
-        p.y > h * 0.4
-      ) {
-        this.attackHeld = true;
+        )<46
+      ){
+        this.skill(this.time.now);
+      } else if(
+        P.Math.Distance.Between(
+          p.x,p.y,
+          this.attackButton.x,
+          this.attackButton.y
+        )<75
+      ){
+        this.attackPointer=p.id;
+        this.attackHeld=true;
       }
     });
 
-    this.input.on("pointermove", p => {
-      if (p.id === this.joyId) {
-        this.moveJoystick(p);
-      }
+    this.input.on("pointermove",p=>{
+      if(p.id===this.joyPointer) this.joystick(p);
     });
 
-    const release = p => {
-      if (p.id === this.joyId) {
-        this.joyId = null;
-        this.move = { x: 0, y: 0 };
+    const release=p=>{
+      if(p.id===this.joyPointer){
+        this.joyPointer=null;
+        this.move={x:0,y:0};
         this.knob.setPosition(
-          this.base.x, this.base.y
+          this.base.x,this.base.y
         );
       }
-
-      this.attackHeld = false;
+      if(p.id===this.attackPointer){
+        this.attackPointer=null;
+        this.attackHeld=false;
+      }
     };
 
-    this.input.on("pointerup", release);
-    this.input.on("pointerupoutside", release);
+    this.input.on("pointerup",release);
+    this.input.on("pointerupoutside",release);
   }
 
-  moveJoystick(p) {
-    const dx = p.x - this.base.x;
-    const dy = p.y - this.base.y;
-    const dist = Math.hypot(dx, dy);
-    const amount = Math.min(1, dist / 55);
+  joystick(p) {
+    const dx=p.x-this.base.x;
+    const dy=p.y-this.base.y;
+    const d=Math.hypot(dx,dy);
+    const v=Math.min(1,d/55);
 
-    this.move = dist
-      ? {
-          x: dx / dist * amount,
-          y: dy / dist * amount
-        }
-      : { x: 0, y: 0 };
+    this.move=d
+      ?{x:dx/d*v,y:dy/d*v}
+      :{x:0,y:0};
 
     this.knob.setPosition(
-      this.base.x + this.move.x * 43,
-      this.base.y + this.move.y * 43
+      this.base.x+this.move.x*43,
+      this.base.y+this.move.y*43
     );
   }
 
-  animateActor(a, now, moving) {
-    if (now - a.lastFrame < (moving ? 110 : 240)) {
-      return;
-    }
+  animate(a,now,moving) {
+    const delay=moving?105:270;
+    if(now-a.lastFrame<delay) return;
 
-    a.lastFrame = now;
-    a.frame = (a.frame + 1) % 4;
-    a.sprite.setTexture(a.type + a.frame);
+    a.lastFrame=now;
+    a.frame=(a.frame+1)%4;
+
+    const key=a.type==="hero"
+      ?"hero_"+this.direction+"_"+a.frame
+      :a.type+"_"+a.frame;
+
+    a.sprite.setTexture(key);
   }
 
-  floatingText(x, y, value, crit = false) {
-    const t = this.add.text(
-      x, y,
-      (crit ? "CRIT " : "") + value,
-      {
-        fontFamily: "system-ui",
-        fontSize: crit ? "23px" : "19px",
-        fontStyle: "bold",
-        color: crit ? "#ffcd5c" : "#ffffff",
-        stroke: "#39251d",
-        strokeThickness: 4
+  directionFrom(x,y) {
+    const angle=Math.atan2(y,x);
+    return (Math.round(angle/(Math.PI/4))+8)%8;
+  }
+
+  damageText(x,y,value,crit=false) {
+    const t=this.add.text(
+      x,y,(crit?"CRIT ":"")+"-"+value,{
+        fontFamily:"system-ui",
+        fontSize:crit?"24px":"20px",
+        fontStyle:"bold",
+        color:crit?"#ffd45c":"#fff5c2",
+        stroke:"#35241b",
+        strokeThickness:4
       }
     ).setOrigin(0.5).setDepth(15000);
 
     this.tweens.add({
-      targets: t,
-      y: y - 55,
-      alpha: 0,
-      duration: 600,
-      onComplete: () => t.destroy()
+      targets:t,y:y-55,alpha:0,
+      duration:650,
+      onComplete:()=>t.destroy()
     });
   }
 
-  attack(now) {
-    const p = this.player.sprite;
-
-    const targets = this.monsters.filter(m =>
-      P.Math.Distance.Between(
-        p.x, p.y, m.sprite.x, m.sprite.y
-      ) < 120
-    );
-
-    if (!targets.length) return;
-
-    targets.sort((a, b) =>
-      P.Math.Distance.Between(
-        p.x, p.y, a.sprite.x, a.sprite.y
-      ) -
-      P.Math.Distance.Between(
-        p.x, p.y, b.sprite.x, b.sprite.y
-      )
-    );
-
-    const m = targets[0];
-    const dx = m.sprite.x - p.x;
-    const dy = m.sprite.y - p.y;
-    const d = Math.max(1, Math.hypot(dx, dy));
-
-    this.facing = { x: dx / d, y: dy / d };
-    p.setFlipX(dx < 0);
-
-    this.lastAttack = now;
-
-    this.createSlash(
-      p.x + this.facing.x * 55,
-      p.y - 43 + this.facing.y * 30,
-      Math.atan2(dy, dx)
-    );
-
-    this.hitMonster(m, false);
-  }
-
-  createSlash(x, y, angle) {
-    const slash = this.add.graphics()
-      .setPosition(x, y)
+  slash(x,y,angle) {
+    const g=this.add.graphics()
+      .setPosition(x,y)
+      .setRotation(angle)
       .setDepth(15000);
 
-    slash.lineStyle(11, 0x1669db, 0.55);
-    slash.beginPath();
-    slash.arc(0, 0, 48, -1.1, 1.1, false);
-    slash.strokePath();
+    g.lineStyle(12,0x236bc6,0.55);
+    g.beginPath();
+    g.arc(0,0,47,-1.1,1.1,false);
+    g.strokePath();
 
-    slash.lineStyle(5, 0xa6f5ff, 1);
-    slash.beginPath();
-    slash.arc(0, 0, 48, -1.1, 1.1, false);
-    slash.strokePath();
+    g.lineStyle(5,0xb7f6ff,1);
+    g.beginPath();
+    g.arc(0,0,47,-1.1,1.1,false);
+    g.strokePath();
 
-    slash.setRotation(angle);
-    slash.setScale(0.6);
+    g.setScale(0.55);
 
     this.tweens.add({
-      targets: slash,
-      scaleX: 1.25,
-      scaleY: 1.25,
-      alpha: 0,
-      rotation: angle + 0.55,
-      duration: 190,
-      onComplete: () => slash.destroy()
+      targets:g,
+      scaleX:1.3,
+      scaleY:1.3,
+      alpha:0,
+      duration:180,
+      onComplete:()=>g.destroy()
     });
   }
 
-  hitMonster(m, skill) {
-    if (!m.sprite.active) return;
+  hit(m,skill=false) {
+    if(!m.sprite.active) return;
 
-    const crit = Math.random() < 0.15;
-    const dmg = skill ? 26 : crit ? 28 : 15;
+    const crit=Math.random()<0.15;
+    const dmg=skill?27:crit?28:15;
+    m.hp-=dmg;
 
-    m.hp -= dmg;
     m.sprite.setTintFill(0xffffff);
-
-    this.time.delayedCall(85, () => {
-      if (m.sprite.active) m.sprite.clearTint();
+    this.time.delayedCall(85,()=>{
+      if(m.sprite.active) m.sprite.clearTint();
     });
 
-    this.floatingText(
+    this.damageText(
       m.sprite.x,
-      m.sprite.y - 80,
-      "-" + dmg,
-      crit
+      m.sprite.y-85,
+      dmg,crit
     );
 
-    if (m.hp > 0) return;
+    if(m.hp>0) return;
 
-    const x = m.sprite.x;
-    const y = m.sprite.y;
-
+    const x=m.sprite.x,y=m.sprite.y;
     m.sprite.destroy();
     m.shadow.destroy();
     m.bar.destroy();
 
-    const index = this.monsters.indexOf(m);
-    if (index !== -1) this.monsters.splice(index, 1);
+    const index=this.monsters.indexOf(m);
+    if(index>=0) this.monsters.splice(index,1);
 
     this.kills++;
-    this.exp += m.type === "boar" ? 20 : 10;
+    this.exp+=m.type==="boar"?20:10;
 
-    while (this.exp >= this.level * 50) {
-      this.exp -= this.level * 50;
+    while(this.exp>=this.level*50){
+      this.exp-=this.level*50;
       this.level++;
-      this.hp = this.maxHp;
+      this.hp=100;
     }
 
-    this.dropLoot(x, y);
+    this.loot(x,y);
   }
 
-  useSkill(now) {
-    if (now - this.lastSkill < 3500) return;
+  attack(now) {
+    const p=this.player.sprite;
 
-    this.lastSkill = now;
+    const targets=this.monsters.filter(m=>
+      P.Math.Distance.Between(
+        p.x,p.y,m.sprite.x,m.sprite.y
+      )<125
+    );
 
-    const p = this.player.sprite;
+    if(!targets.length) return;
 
-    const circle = this.add.circle(
-      p.x, p.y - 30, 25,
-      0x69dfff, 0.24
-    ).setStrokeStyle(5, 0xa9f6ff)
+    targets.sort((a,b)=>
+      P.Math.Distance.Between(
+        p.x,p.y,a.sprite.x,a.sprite.y
+      )-
+      P.Math.Distance.Between(
+        p.x,p.y,b.sprite.x,b.sprite.y
+      )
+    );
+
+    const m=targets[0];
+    const dx=m.sprite.x-p.x;
+    const dy=m.sprite.y-p.y;
+    const angle=Math.atan2(dy,dx);
+
+    this.direction=this.directionFrom(dx,dy);
+    this.lastAttack=now;
+
+    this.slash(
+      p.x+Math.cos(angle)*55,
+      p.y-45+Math.sin(angle)*30,
+      angle
+    );
+
+    this.hit(m);
+  }
+
+  skill(now) {
+    if(now-this.lastSkill<3500) return;
+    this.lastSkill=now;
+
+    const p=this.player.sprite;
+
+    const ring=this.add.circle(
+      p.x,p.y-30,20,0x5adfff,0.22
+    ).setStrokeStyle(5,0xa5f5ff)
       .setDepth(15000);
 
     this.tweens.add({
-      targets: circle,
-      scaleX: 6,
-      scaleY: 6,
-      alpha: 0,
-      duration: 350,
-      onComplete: () => circle.destroy()
+      targets:ring,
+      scaleX:7,scaleY:7,alpha:0,
+      duration:350,
+      onComplete:()=>ring.destroy()
     });
 
-    for (const m of [...this.monsters]) {
-      if (
-        P.Math.Distance.Between(
-          p.x, p.y, m.sprite.x, m.sprite.y
-        ) < 160
-      ) {
-        this.hitMonster(m, true);
-      }
+    for(const m of [...this.monsters]){
+      if(P.Math.Distance.Between(
+        p.x,p.y,m.sprite.x,m.sprite.y
+      )<160) this.hit(m,true);
     }
   }
 
-  dropLoot(x, y) {
-    const count = P.Math.Between(2, 4);
+  loot(x,y) {
+    for(let i=0;i<P.Math.Between(2,4);i++){
+      const gem=Math.random()<0.2;
+      const s=this.add.image(
+        x,y-30,gem?"gem":"coin"
+      ).setDepth(y+2);
 
-    for (let i = 0; i < count; i++) {
-      const gem = Math.random() < 0.2;
-
-      const s = this.add.image(
-        x, y - 35, gem ? "gem" : "coin"
-      ).setDepth(y + 2);
-
-      const tx = x + P.Math.Between(-55, 55);
-      const ty = y + P.Math.Between(-25, 25);
+      const tx=x+P.Math.Between(-55,55);
+      const ty=y+P.Math.Between(-25,25);
 
       this.tweens.add({
-        targets: s,
-        x: tx,
-        duration: 350,
-        ease: "Cubic.Out"
+        targets:s,x:tx,
+        duration:350,ease:"Cubic.Out"
       });
 
       this.tweens.add({
-        targets: s,
-        y: y - 75,
-        duration: 190,
-        yoyo: true,
-        onComplete: () => {
-          if (s.active) s.y = ty;
+        targets:s,y:y-75,
+        duration:190,yoyo:true,
+        onComplete:()=>{
+          if(s.active) s.y=ty;
         }
       });
 
       this.drops.push({
-        sprite: s,
-        gem,
-        ready: this.time.now + 450
+        sprite:s,gem,
+        ready:this.time.now+450
       });
     }
   }
 
   updateHUD(now) {
-    if (now - this.lastHud < 150) return;
-    this.lastHud = now;
+    if(now-this.lastHUD<150) return;
+    this.lastHUD=now;
 
-    const w = this.scale.width;
-    const compact = w < 440;
+    const w=this.scale.width;
+    const panelW=Math.min(w-110,315);
 
-    this.hudBg.clear();
-
-    const panelW = Math.min(w - 105, 315);
-
-    this.hudBg.fillStyle(0x122637, 0.91);
-    this.hudBg.fillRoundedRect(
-      8, 8, panelW, 94, 8
+    this.panel.clear();
+    this.panel.fillStyle(0x102535,0.93);
+    this.panel.fillRoundedRect(
+      8,8,panelW,97,7
     );
 
-    this.hudBg.lineStyle(2, 0xc49a51);
-    this.hudBg.strokeRoundedRect(
-      8, 8, panelW, 94, 8
+    this.panel.lineStyle(2,0xc49a54);
+    this.panel.strokeRoundedRect(
+      8,8,panelW,97,7
     );
 
-    this.hudBg.fillStyle(0x48282b);
-    this.hudBg.fillRect(16, 36, panelW - 18, 12);
-
-    this.hudBg.fillStyle(0xd84343);
-    this.hudBg.fillRect(
-      16, 36,
-      (panelW - 18) * this.hp / this.maxHp,
-      12
+    this.panel.fillStyle(0x47272b);
+    this.panel.fillRect(16,38,panelW-17,12);
+    this.panel.fillStyle(0xd84444);
+    this.panel.fillRect(
+      16,38,
+      (panelW-17)*this.hp/100,12
     );
 
-    this.hudBg.fillStyle(0x21324b);
-    this.hudBg.fillRect(16, 57, panelW - 18, 8);
-
-    this.hudBg.fillStyle(0x45baff);
-    this.hudBg.fillRect(
-      16, 57,
-      (panelW - 18) * this.exp /
-        (this.level * 50),
+    this.panel.fillStyle(0x21334c);
+    this.panel.fillRect(16,59,panelW-17,8);
+    this.panel.fillStyle(0x4bbaff);
+    this.panel.fillRect(
+      16,59,
+      (panelW-17)*this.exp/(this.level*50),
       8
     );
 
-    this.hud.setFontSize(compact ? 13 : 15);
-
+    this.hud.setFontSize(w<450?13:15);
     this.hud.setText(
-      "LV." + this.level +
-      "   HP " + this.hp + "/" + this.maxHp +
-      "\n\n\nGOLD " + this.gold +
-      "  GEM " + this.gems +
-      "  KILLS " + this.kills
+      "LV."+this.level+"  HP "+this.hp+"/100"+
+      "\n\n\nGOLD "+this.gold+
+      "   GEM "+this.gems+
+      "   KILLS "+this.kills+
+      "   V0.5"
     );
 
     this.fpsText.setText(
-      "FPS " + Math.round(this.fpsAverage)
+      "FPS "+Math.round(this.fps)
     );
-
-    this.miniBg.clear();
-
-    if (w >= 600) {
-      const mx = w - 130;
-      const my = 60;
-
-      this.miniBg.fillStyle(0x102a29, 0.9);
-      this.miniBg.fillRoundedRect(
-        mx, my, 115, 90, 5
-      );
-
-      this.miniBg.lineStyle(2, 0xb59a5b);
-      this.miniBg.strokeRoundedRect(
-        mx, my, 115, 90, 5
-      );
-
-      const px = mx + 8 +
-        this.player.sprite.x / WORLD_W * 99;
-
-      const py = my + 8 +
-        this.player.sprite.y / WORLD_H * 74;
-
-      this.miniBg.fillStyle(0x5dd6ff);
-      this.miniBg.fillCircle(px, py, 4);
-
-      this.miniBg.fillStyle(0xff5c56);
-
-      for (const m of this.monsters) {
-        const x = mx + 8 +
-          m.sprite.x / WORLD_W * 99;
-
-        const y = my + 8 +
-          m.sprite.y / WORLD_H * 74;
-
-        this.miniBg.fillCircle(x, y, 2);
-      }
-    }
   }
 
-  update(now, delta) {
-    const dt = Math.min(delta / 1000, 0.05);
-    const p = this.player.sprite;
+  update(now,delta) {
+    const dt=Math.min(delta/1000,0.05);
+    this.fps=this.fps*0.95+
+      Math.min(120,1000/Math.max(1,delta))*0.05;
 
-    // Smoothed FPS measurement
-    const currentFPS = delta > 0
-      ? Math.min(120, 1000 / delta)
-      : 60;
+    const p=this.player.sprite;
+    let x=this.move.x,y=this.move.y;
 
-    this.fpsAverage =
-      this.fpsAverage * 0.95 + currentFPS * 0.05;
-
-    let x = this.move.x;
-    let y = this.move.y;
-
-    x += Number(
-      this.keys.D.isDown || this.keys.RIGHT.isDown
-    ) - Number(
-      this.keys.A.isDown || this.keys.LEFT.isDown
+    x+=Number(
+      this.keys.D.isDown||this.keys.RIGHT.isDown
+    )-Number(
+      this.keys.A.isDown||this.keys.LEFT.isDown
     );
 
-    y += Number(
-      this.keys.S.isDown || this.keys.DOWN.isDown
-    ) - Number(
-      this.keys.W.isDown || this.keys.UP.isDown
+    y+=Number(
+      this.keys.S.isDown||this.keys.DOWN.isDown
+    )-Number(
+      this.keys.W.isDown||this.keys.UP.isDown
     );
 
-    const len = Math.hypot(x, y);
+    const len=Math.hypot(x,y);
+    if(len>1){x/=len;y/=len;}
 
-    if (len > 1) {
-      x /= len;
-      y /= len;
-    }
+    p.setVelocity(x*HERO_SPEED,y*HERO_SPEED);
 
-    p.setVelocity(x * SPEED, y * SPEED);
-
-    if (len > 0.1) {
-      this.facing = { x, y };
-
-      if (x !== 0) p.setFlipX(x < 0);
+    if(len>0.1){
+      const newDir=this.directionFrom(x,y);
+      if(newDir!==this.direction){
+        this.direction=newDir;
+        this.player.lastFrame=0;
+      }
     }
 
     p.setDepth(p.y);
-
     this.player.shadow
-      .setPosition(p.x, p.y)
-      .setDepth(p.y - 1);
+      .setPosition(p.x,p.y)
+      .setDepth(p.y-1);
 
-    this.animateActor(
-      this.player, now, len > 0.1
-    );
+    this.animate(this.player,now,len>0.1);
 
-    for (const m of this.monsters) {
-      const s = m.sprite;
+    for(const m of this.monsters){
+      const s=m.sprite;
+      const dx=p.x-s.x;
+      const dy=p.y-s.y;
+      const d=Math.hypot(dx,dy);
 
-      const dx = p.x - s.x;
-      const dy = p.y - s.y;
-      const d = Math.hypot(dx, dy);
-
-      if (d < 320 && d > 47) {
+      if(d<320&&d>48){
         s.setVelocity(
-          dx / d * m.speed,
-          dy / d * m.speed
+          dx/d*m.speed,dy/d*m.speed
         );
-        s.setFlipX(dx < 0);
+        s.setFlipX(dx<0);
       } else {
-        s.setVelocity(0, 0);
+        s.setVelocity(0,0);
       }
 
       s.setDepth(s.y);
+      m.shadow.setPosition(s.x,s.y)
+        .setDepth(s.y-1);
 
-      m.shadow
-        .setPosition(s.x, s.y)
-        .setDepth(s.y - 1);
-
-      this.animateActor(
-        m, now, d < 320 && d > 47
-      );
+      this.animate(m,now,d<320&&d>48);
 
       m.bar.clear();
 
-      if (d < 450) {
-        m.bar.fillStyle(0x192724);
-        m.bar.fillRect(s.x - 27, s.y - 83, 54, 8);
-
-        m.bar.fillStyle(0xd94a42);
+      if(d<440){
+        m.bar.fillStyle(0x17241e);
+        m.bar.fillRect(s.x-27,s.y-91,54,8);
+        m.bar.fillStyle(0xd94a43);
         m.bar.fillRect(
-          s.x - 26,
-          s.y - 82,
-          52 * Math.max(0, m.hp / m.maxHp),
-          6
+          s.x-26,s.y-90,
+          52*Math.max(0,m.hp/m.maxHp),6
         );
       }
 
-      m.bar.setDepth(s.y + 1);
+      m.bar.setDepth(s.y+1);
 
-      if (d < 48 && now - m.lastHit > 1250) {
-        m.lastHit = now;
-        this.hp = Math.max(
-          0,
-          this.hp - (m.type === "boar" ? 7 : 4)
+      if(d<48&&now-m.lastHit>1250){
+        m.lastHit=now;
+        this.hp=Math.max(
+          0,this.hp-(m.type==="boar"?7:4)
         );
-        this.cameras.main.shake(55, 0.001);
+        this.cameras.main.shake(55,0.001);
       }
     }
 
-    const nearby = this.monsters.some(m =>
+    const nearby=this.monsters.some(m=>
       P.Math.Distance.Between(
-        p.x, p.y, m.sprite.x, m.sprite.y
-      ) < 120
+        p.x,p.y,m.sprite.x,m.sprite.y
+      )<125
     );
 
-    if (
-      now - this.lastAttack > 520 &&
-      (
-        nearby ||
-        this.attackHeld ||
-        this.keys.SPACE.isDown
-      )
-    ) {
+    if(
+      now-this.lastAttack>520 &&
+      (nearby||this.attackHeld||this.keys.SPACE.isDown)
+    ){
       this.attack(now);
     }
 
-    for (let i = this.drops.length - 1; i >= 0; i--) {
-      const d = this.drops[i];
-      const s = d.sprite;
+    for(let i=this.drops.length-1;i>=0;i--){
+      const d=this.drops[i],s=d.sprite;
+      if(now<d.ready) continue;
 
-      if (now < d.ready) continue;
-
-      const dist = P.Math.Distance.Between(
-        p.x, p.y, s.x, s.y
+      const dist=P.Math.Distance.Between(
+        p.x,p.y,s.x,s.y
       );
 
-      if (dist < 145) {
-        const t = Math.min(1, dt * 7);
-
-        s.x += (p.x - s.x) * t;
-        s.y += (p.y - 20 - s.y) * t;
+      if(dist<145){
+        const t=Math.min(1,dt*7);
+        s.x+=(p.x-s.x)*t;
+        s.y+=(p.y-20-s.y)*t;
       }
 
-      s.setDepth(s.y + 1);
+      s.setDepth(s.y+1);
 
-      if (dist < 26) {
-        if (d.gem) this.gems++;
+      if(dist<26){
+        if(d.gem)this.gems++;
         else this.gold++;
-
         s.destroy();
-        this.drops.splice(i, 1);
+        this.drops.splice(i,1);
       }
     }
 
-    if (
-      this.monsters.length < 11 &&
-      now - this.lastSpawn > 1100
-    ) {
-      this.lastSpawn = now;
+    if(
+      this.monsters.length<11 &&
+      now-this.lastSpawn>1100
+    ){
+      this.lastSpawn=now;
       this.spawnMonster();
     }
 
-    if (this.hp <= 0) {
-      this.hp = this.maxHp;
-      p.setPosition(920, 690);
-      p.setVelocity(0, 0);
-      this.cameras.main.flash(200, 255, 55, 55);
+    if(this.hp<=0){
+      this.hp=100;
+      p.setPosition(920,700);
+      p.setVelocity(0,0);
+      this.cameras.main.flash(180,255,60,60);
     }
 
     this.updateHUD(now);
@@ -1042,29 +950,27 @@ class ForestRPG extends P.Scene {
 }
 
 new P.Game({
-  type: P.AUTO,
-  parent: "game",
-  backgroundColor: "#14283b",
-  fps: {
-    target: 60,
-    forceSetTimeOut: false
+  type:P.AUTO,
+  parent:"game",
+  backgroundColor:"#14283b",
+  fps:{
+    target:60,
+    forceSetTimeOut:false
   },
-  scale: {
-    mode: P.Scale.RESIZE,
-    width: innerWidth,
-    height: innerHeight,
-    autoCenter: P.Scale.CENTER_BOTH
+  scale:{
+    mode:P.Scale.RESIZE,
+    width:innerWidth,
+    height:innerHeight,
+    autoCenter:P.Scale.CENTER_BOTH
   },
-  render: {
-    pixelArt: true,
-    antialias: false,
-    roundPixels: true
+  render:{
+    pixelArt:true,
+    antialias:false,
+    roundPixels:true
   },
-  physics: {
-    default: "arcade",
-    arcade: {
-      debug: false
-    }
+  physics:{
+    default:"arcade",
+    arcade:{debug:false}
   },
-  scene: [ForestRPG]
+  scene:[QuarterRPG]
 });
