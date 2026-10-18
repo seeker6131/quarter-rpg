@@ -2,13 +2,13 @@
 const loading = document.getElementById('loading');
 
 if (!window.Phaser) {
-  loading.textContent = 'โหลด Phaser ไม่สำเร็จ';
-  throw new Error('Phaser unavailable');
+  if (loading) loading.textContent = 'Phaser โหลดไม่สำเร็จ';
+  throw Error('Phaser unavailable');
 }
 
 const P = window.Phaser;
-const W = 1800;
-const H = 1200;
+const WW = 1800;
+const HH = 1200;
 
 class GameScene extends P.Scene {
   constructor() {
@@ -16,68 +16,68 @@ class GameScene extends P.Scene {
   }
 
   create() {
-    loading.remove();
+    if (loading) loading.remove();
 
-    this.cameras.main.setBackgroundColor('#254c55');
-    this.physics.world.setBounds(0, 0, W, H);
+    this.physics.world.setBounds(0, 0, WW, HH);
+    this.cameras.main.setBackgroundColor('#264b48');
 
-    this.makeTextures();
-    this.makeWorld();
+    this.createTextures();
+    this.createMap();
 
     this.gold = 0;
     this.kills = 0;
     this.level = 1;
     this.exp = 0;
     this.hp = 100;
-    this.move = { x: 0, y: 0 };
-    this.touchId = null;
     this.lastAttack = 0;
     this.lastSpawn = 0;
+    this.move = { x: 0, y: 0 };
+    this.joyId = null;
     this.monsters = [];
     this.drops = [];
 
-    this.player = this.makeActor(900, 600, true);
+    this.player = this.actor(900, 600, true);
 
     for (let i = 0; i < 9; i++) {
-      this.spawnMonster();
+      this.spawn();
     }
 
     this.cameras.main
-      .setBounds(0, 0, W, H)
+      .setBounds(0, 0, WW, HH)
       .startFollow(this.player.sprite, true, 0.1, 0.1);
 
-    this.setupUI();
+    this.createUI();
 
     this.keys = this.input.keyboard.addKeys(
       'W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE'
     );
 
-    this.scale.on('resize', this.placeUI, this);
-    this.placeUI();
+    this.scale.on('resize', this.layout, this);
+    this.layout();
 
     this.input.on('pointerdown', p => {
       if (
         p.x < this.scale.width * 0.48 &&
         p.y > this.scale.height * 0.42 &&
-        this.touchId === null
+        this.joyId === null
       ) {
-        this.touchId = p.id;
-        this.joystick(p);
+        this.joyId = p.id;
+        this.moveJoy(p);
       } else if (
-        p.x > this.scale.width * 0.55 &&
+        p.x > this.scale.width * 0.52 &&
         p.y > this.scale.height * 0.4
       ) {
-        this.manualAttack = true;
+        this.manual = true;
       }
     });
 
     this.input.on('pointermove', p => {
-      if (p.id === this.touchId) this.joystick(p);
+      if (p.id === this.joyId) this.moveJoy(p);
     });
 
     const release = p => {
-      if (p.id === this.touchId) {
-        this.touchId = null;
+      if (p.id === this.joyId) {
+        this.joyId = null;
         this.move = { x: 0, y: 0 };
         this.knob.setPosition(this.base.x, this.base.y);
       }
@@ -87,192 +87,215 @@ class GameScene extends P.Scene {
     this.input.on('pointerupoutside', release);
   }
 
-  makeTextures() {
+  createTextures() {
     const g = this.make.graphics({ x: 0, y: 0 });
 
-    // Hero
-    g.fillStyle(0x5eabed);
-    g.fillRoundedRect(9, 23, 30, 32, 8);
-    g.fillStyle(0xf4c7a1);
-    g.fillCircle(24, 17, 14);
-    g.fillStyle(0x453525);
-    g.fillEllipse(24, 8, 29, 12);
-    g.fillStyle(0x253b6c);
-    g.fillRect(11, 53, 12, 13);
-    g.fillRect(26, 53, 12, 13);
-    g.fillStyle(0x172c3c);
-    g.fillRect(32, 17, 6, 4);
-    g.generateTexture('hero', 48, 70);
+    const save = (name, w, h) => {
+      g.generateTexture(name, w, h);
+      g.clear();
+    };
 
-    g.clear();
+    // Hero
+    g.fillStyle(0x243a66);
+    g.fillRoundedRect(13, 45, 14, 21, 3);
+    g.fillRoundedRect(29, 45, 14, 21, 3);
+
+    g.fillStyle(0x4c98d9);
+    g.fillRoundedRect(9, 22, 38, 31, 7);
+
+    g.fillStyle(0xf0c49c);
+    g.fillCircle(28, 16, 15);
+
+    g.fillStyle(0x513725);
+    g.fillEllipse(28, 7, 31, 13);
+
+    g.fillStyle(0x192d3a);
+    g.fillRect(35, 18, 5, 4);
+
+    g.lineStyle(4, 0xf5e6b6);
+    g.lineBetween(48, 37, 61, 13);
+
+    save('hero', 66, 70);
 
     // Monster
-    g.fillStyle(0x78c56b);
-    g.fillEllipse(28, 36, 26, 21);
-    g.fillStyle(0xb6e78b);
-    g.fillCircle(28, 18, 16);
-    g.fillStyle(0x142c23);
-    g.fillCircle(35, 18, 3);
-    g.fillStyle(0x436a39);
-    g.fillRect(14, 49, 11, 10);
-    g.fillRect(32, 49, 11, 10);
-    g.generateTexture('slime', 56, 62);
+    g.fillStyle(0x3b743c);
+    g.fillRoundedRect(12, 41, 12, 15, 3);
+    g.fillRoundedRect(32, 41, 12, 15, 3);
 
-    g.clear();
+    g.fillStyle(0x76be63);
+    g.fillEllipse(28, 34, 27, 22);
+
+    g.fillStyle(0xb6e78b);
+    g.fillCircle(28, 19, 17);
+
+    g.fillStyle(0x203a25);
+    g.fillCircle(35, 19, 3);
+
+    save('slime', 56, 61);
 
     // Coin
-    g.fillStyle(0xffd65a);
-    g.fillCircle(11, 11, 9);
-    g.lineStyle(3, 0xa66a25);
-    g.strokeCircle(11, 11, 9);
-    g.generateTexture('coin', 22, 22);
-
-    g.clear();
+    g.fillStyle(0xffd45c);
+    g.fillCircle(12, 12, 10);
+    g.lineStyle(3, 0xa86c28);
+    g.strokeCircle(12, 12, 10);
+    save('coin', 24, 24);
 
     // Gem
-    g.fillStyle(0x6dd8fc);
+    g.fillStyle(0x65d9ff);
     g.fillPoints([
       { x: 12, y: 0 },
       { x: 24, y: 12 },
       { x: 12, y: 24 },
       { x: 0, y: 12 }
     ], true);
-    g.generateTexture('gem', 24, 24);
+    save('gem', 24, 24);
 
     g.destroy();
   }
 
-  makeWorld() {
-    const bg = this.add.graphics().setDepth(-10000);
+  createMap() {
+    const g = this.add.graphics().setDepth(-10000);
 
-    bg.fillStyle(0x365f4b);
-    bg.fillRect(0, 0, W, H);
+    g.fillStyle(0x315b48);
+    g.fillRect(0, 0, WW, HH);
 
-    for (let i = 0; i < 450; i++) {
-      const x = P.Math.Between(0, W);
-      const y = P.Math.Between(0, H);
+    for (let i = 0; i < 420; i++) {
+      const x = P.Math.Between(0, WW);
+      const y = P.Math.Between(0, HH);
 
-      bg.fillStyle(
-        i % 3 === 0 ? 0x729c67 : 0x4c7b59,
-        0.5
+      g.fillStyle(
+        i % 3 ? 0x56825c : 0x739667,
+        0.45
       );
 
-      bg.fillEllipse(
+      g.fillEllipse(
         x, y,
-        P.Math.Between(5, 26),
+        P.Math.Between(5, 25),
         P.Math.Between(2, 8)
       );
     }
 
-    for (let i = 0; i < 60; i++) {
-      const x = P.Math.Between(30, W - 30);
-      const y = P.Math.Between(35, H - 35);
+    g.fillStyle(0x977b53, 0.35);
+    g.fillEllipse(900, 600, 780, 340);
 
-      if (Math.hypot(x - 900, y - 600) < 240) continue;
+    for (let i = 0; i < 55; i++) {
+      const x = P.Math.Between(45, WW - 45);
+      const y = P.Math.Between(40, HH - 40);
 
-      const tree = this.add.container(x, y).setDepth(y);
+      if (Math.hypot(x - 900, y - 600) < 230) continue;
 
-      tree.add([
-        this.add.ellipse(0, 0, 68, 18, 0x102e25, 0.35),
-        this.add.rectangle(0, -29, 17, 62, 0x76563d),
-        this.add.ellipse(0, -76, 79, 81, 0x2a8151)
-          .setStrokeStyle(3, 0x185638)
+      const c = this.add.container(x, y).setDepth(y);
+
+      c.add([
+        this.add.ellipse(
+          0, 0, 70, 20, 0x0b3028, 0.4
+        ),
+        this.add.rectangle(
+          0, -32, 19, 65, 0x785338
+        ),
+        this.add.ellipse(
+          0, -84, 85, 82, 0x2c8051
+        ).setStrokeStyle(4, 0x18583a)
       ]);
     }
   }
 
-  makeActor(x, y, hero) {
+  actor(x, y, hero) {
     const shadow = this.add.ellipse(
-      x, y, 40, 13, 0x0c241f, 0.45
+      x, y, 44, 14, 0x091e19, 0.42
     ).setDepth(y - 1);
 
     const sprite = this.physics.add.sprite(
       x, y, hero ? 'hero' : 'slime'
+    ).setOrigin(0.5, 1).setDepth(y);
+
+    sprite.body.setSize(30, 16);
+    sprite.body.setOffset(
+      hero ? 13 : 13,
+      hero ? 52 : 43
     );
-
-    sprite.setOrigin(0.5, 1);
-    sprite.setDepth(y);
-
-    sprite.body.setSize(30, 17);
-    sprite.body.setOffset(hero ? 9 : 13, hero ? 52 : 44);
     sprite.setCollideWorldBounds(true);
+
+    const bar = this.add.graphics().setDepth(y + 1);
 
     return {
       sprite,
       shadow,
+      bar,
       hp: hero ? 100 : 40,
+      maxHp: hero ? 100 : 40,
       lastHit: 0,
-      originX: x,
-      originY: y,
+      homeX: x,
+      homeY: y,
       hero
     };
   }
 
-  spawnMonster() {
-    const x = P.Math.Between(60, W - 60);
-    const y = P.Math.Between(80, H - 80);
+  spawn() {
+    const x = P.Math.Between(50, WW - 50);
+    const y = P.Math.Between(60, HH - 60);
 
     if (
       Math.hypot(
         x - this.player.sprite.x,
         y - this.player.sprite.y
-      ) < 220
+      ) < 230
     ) return;
 
-    this.monsters.push(this.makeActor(x, y, false));
+    this.monsters.push(this.actor(x, y, false));
   }
 
-  setupUI() {
+  createUI() {
     this.hud = this.add.text(12, 10, '', {
       fontFamily: 'system-ui',
       fontSize: '17px',
       fontStyle: 'bold',
-      color: '#ffffff',
-      backgroundColor: '#0d2638dd',
-      padding: { x: 10, y: 7 }
+      color: '#fff',
+      backgroundColor: '#102b38dd',
+      padding: { x: 12, y: 8 }
     }).setScrollFactor(0).setDepth(99999);
 
     this.base = this.add.circle(
-      90, 0, 64, 0x0c2942, 0.6
-    ).setStrokeStyle(3, 0xffffff, 0.45)
+      90, 0, 64, 0x0e3043, 0.6
+    ).setStrokeStyle(3, 0xd1e9f2, 0.5)
       .setScrollFactor(0).setDepth(99999);
 
     this.knob = this.add.circle(
-      90, 0, 27, 0xa4d9f8, 0.9
+      90, 0, 28, 0xa4d9f8, 0.9
     ).setScrollFactor(0).setDepth(100000);
 
     this.attackBtn = this.add.circle(
-      0, 0, 52, 0xc35a39, 0.85
-    ).setStrokeStyle(4, 0xffd49b)
+      0, 0, 52, 0xc15d39, 0.85
+    ).setStrokeStyle(4, 0xffd59a)
       .setScrollFactor(0).setDepth(99999);
 
     this.attackText = this.add.text(0, 0, 'ตี', {
       fontFamily: 'system-ui',
-      fontSize: '24px',
+      fontSize: '23px',
       fontStyle: 'bold',
       color: '#fff'
     }).setOrigin(0.5)
       .setScrollFactor(0).setDepth(100000);
   }
 
-  placeUI() {
+  layout() {
     const w = this.scale.width;
     const h = this.scale.height;
 
     this.base.setPosition(90, h - 90);
     this.knob.setPosition(90, h - 90);
-    this.attackBtn.setPosition(w - 85, h - 90);
-    this.attackText.setPosition(w - 85, h - 90);
+    this.attackBtn.setPosition(w - 86, h - 90);
+    this.attackText.setPosition(w - 86, h - 90);
   }
 
-  joystick(p) {
+  moveJoy(p) {
     const dx = p.x - this.base.x;
     const dy = p.y - this.base.y;
     const d = Math.hypot(dx, dy);
-    const strength = Math.min(1, d / 55);
+    const s = Math.min(1, d / 55);
 
-    this.move = d > 0
-      ? { x: dx / d * strength, y: dy / d * strength }
+    this.move = d
+      ? { x: dx / d * s, y: dy / d * s }
       : { x: 0, y: 0 };
 
     this.knob.setPosition(
@@ -281,53 +304,70 @@ class GameScene extends P.Scene {
     );
   }
 
-  damage(mon) {
-    const crit = Math.random() < 0.15;
-    const damage = crit ? 24 : 12;
-
-    mon.hp -= damage;
-    mon.sprite.setTintFill(0xffffff);
-
-    this.time.delayedCall(95, () => {
-      if (mon.sprite.active) mon.sprite.clearTint();
-    });
-
-    const txt = this.add.text(
-      mon.sprite.x,
-      mon.sprite.y - 83,
-      (crit ? 'CRIT ' : '') + '-' + damage,
+  floatText(x, y, value, crit) {
+    const t = this.add.text(
+      x, y,
+      (crit ? 'CRIT ' : '') + '-' + value,
       {
         fontSize: crit ? '24px' : '19px',
         fontStyle: 'bold',
-        color: crit ? '#ffb65b' : '#fff0ad',
-        stroke: '#3d261c',
+        color: crit ? '#ffc366' : '#fff3b3',
+        stroke: '#38231c',
         strokeThickness: 4
       }
-    ).setOrigin(0.5).setDepth(10000);
+    ).setOrigin(0.5).setDepth(15000);
 
     this.tweens.add({
-      targets: txt,
-      y: txt.y - 48,
+      targets: t,
+      y: y - 52,
       alpha: 0,
       duration: 650,
-      onComplete: () => txt.destroy()
+      onComplete: () => t.destroy()
+    });
+  }
+
+  damage(m) {
+    const crit = Math.random() < 0.15;
+    const dmg = crit ? 24 : 12;
+
+    m.hp -= dmg;
+    m.sprite.setTintFill(0xffffff);
+
+    this.time.delayedCall(90, () => {
+      if (m.sprite.active) m.sprite.clearTint();
     });
 
-    if (mon.hp <= 0) {
-      const x = mon.sprite.x;
-      const y = mon.sprite.y;
+    this.floatText(
+      m.sprite.x,
+      m.sprite.y - 80,
+      dmg,
+      crit
+    );
 
-      mon.sprite.destroy();
-      mon.shadow.destroy();
+    this.tweens.add({
+      targets: m.sprite,
+      scaleX: 1.18,
+      scaleY: 0.85,
+      duration: 75,
+      yoyo: true
+    });
+
+    if (m.hp <= 0) {
+      const x = m.sprite.x;
+      const y = m.sprite.y;
+
+      m.sprite.destroy();
+      m.shadow.destroy();
+      m.bar.destroy();
 
       this.monsters.splice(
-        this.monsters.indexOf(mon), 1
+        this.monsters.indexOf(m), 1
       );
 
       this.kills++;
       this.exp += 10;
 
-      if (this.exp >= this.level * 50) {
+      while (this.exp >= this.level * 50) {
         this.exp -= this.level * 50;
         this.level++;
         this.hp = 100;
@@ -341,32 +381,37 @@ class GameScene extends P.Scene {
     const count = P.Math.Between(2, 4);
 
     for (let i = 0; i < count; i++) {
-      const gem = Math.random() < 0.15;
+      const gem = Math.random() < 0.16;
 
-      const obj = this.add.image(
-        x, y - 32, gem ? 'gem' : 'coin'
-      ).setDepth(y + 1);
+      const s = this.add.image(
+        x, y - 30, gem ? 'gem' : 'coin'
+      ).setDepth(y + 2);
 
-      const targetX = x + P.Math.Between(-65, 65);
+      const tx = x + P.Math.Between(-65, 65);
+      const ty = y + P.Math.Between(-25, 25);
 
       this.tweens.add({
-        targets: obj,
-        x: targetX,
-        duration: 400,
+        targets: s,
+        x: tx,
+        duration: 390,
         ease: 'Cubic.Out'
       });
 
       this.tweens.add({
-        targets: obj,
+        targets: s,
         y: y - 80,
-        duration: 220,
+        duration: 210,
         yoyo: true,
-        ease: 'Quad.Out'
+        ease: 'Quad.Out',
+        onComplete: () => {
+          if (s.active) s.y = ty;
+        }
       });
 
       this.drops.push({
-        sprite: obj,
-        value: gem ? 5 : 1
+        sprite: s,
+        value: gem ? 5 : 1,
+        ready: this.time.now + 480
       });
     }
   }
@@ -374,7 +419,7 @@ class GameScene extends P.Scene {
   attack(now) {
     const p = this.player.sprite;
 
-    const nearby = this.monsters
+    const near = this.monsters
       .filter(m =>
         P.Math.Distance.Between(
           p.x, p.y, m.sprite.x, m.sprite.y
@@ -389,12 +434,13 @@ class GameScene extends P.Scene {
         )
       );
 
-    if (!nearby.length) return;
+    if (!near.length) return;
 
-    const m = nearby[0];
+    const m = near[0];
     this.lastAttack = now;
 
-    p.setTintFill(0xd8efff);
+    p.setFlipX(m.sprite.x < p.x);
+    p.setTintFill(0xd8f1ff);
 
     this.time.delayedCall(100, () => {
       if (p.active) p.clearTint();
@@ -402,15 +448,16 @@ class GameScene extends P.Scene {
 
     const slash = this.add.ellipse(
       (p.x + m.sprite.x) / 2,
-      (p.y + m.sprite.y) / 2 - 28,
-      65, 26, 0xe5f6ff, 0.8
-    ).setDepth(10000);
+      (p.y + m.sprite.y) / 2 - 34,
+      75, 26, 0xcaf3ff, 0.8
+    ).setDepth(15000);
 
     this.tweens.add({
       targets: slash,
+      angle: 50,
+      scaleX: 1.45,
       alpha: 0,
-      scaleX: 1.5,
-      duration: 180,
+      duration: 190,
       onComplete: () => slash.destroy()
     });
 
@@ -445,11 +492,18 @@ class GameScene extends P.Scene {
       y /= len;
     }
 
-    p.setVelocity(x * 235, y * 235);
+    p.setVelocity(x * 230, y * 230);
 
     if (x !== 0) p.setFlipX(x < 0);
 
     p.setDepth(p.y);
+
+    p.setScale(
+      1 + Math.sin(now * 0.016) *
+        (len > 0.1 ? 0.025 : 0.008),
+      1 + Math.sin(now * 0.016) *
+        (len > 0.1 ? -0.025 : -0.008)
+    );
 
     this.player.shadow
       .setPosition(p.x, p.y)
@@ -462,10 +516,10 @@ class GameScene extends P.Scene {
         s.x, s.y, p.x, p.y
       );
 
-      if (d < 265 && d > 48) {
+      if (d < 270 && d > 48) {
         s.setVelocity(
-          (p.x - s.x) / d * 85,
-          (p.y - s.y) / d * 85
+          (p.x - s.x) / d * 83,
+          (p.y - s.y) / d * 83
         );
         s.setFlipX(p.x < s.x);
       } else {
@@ -478,6 +532,21 @@ class GameScene extends P.Scene {
         .setPosition(s.x, s.y)
         .setDepth(s.y - 1);
 
+      m.bar.clear()
+        .fillStyle(0x16251c, 0.9)
+        .fillRoundedRect(
+          s.x - 23, s.y - 76, 46, 7, 2
+        )
+        .fillStyle(0x83df78)
+        .fillRoundedRect(
+          s.x - 22,
+          s.y - 75,
+          44 * Math.max(0, m.hp / m.maxHp),
+          5, 2
+        );
+
+      m.bar.setDepth(s.y + 1);
+
       if (d < 48 && now - m.lastHit > 1250) {
         m.lastHit = now;
         this.hp = Math.max(0, this.hp - 4);
@@ -485,7 +554,7 @@ class GameScene extends P.Scene {
       }
     }
 
-    const enemyNearby = this.monsters.some(m =>
+    const nearby = this.monsters.some(m =>
       P.Math.Distance.Between(
         p.x, p.y, m.sprite.x, m.sprite.y
       ) < 100
@@ -493,26 +562,30 @@ class GameScene extends P.Scene {
 
     if (
       now - this.lastAttack > 550 &&
-      (this.manualAttack ||
-       this.keys.SPACE.isDown ||
-       enemyNearby)
+      (
+        nearby ||
+        this.manual ||
+        this.keys.SPACE.isDown
+      )
     ) {
       this.attack(now);
     }
 
-    this.manualAttack = false;
+    this.manual = false;
 
     for (let i = this.drops.length - 1; i >= 0; i--) {
       const d = this.drops[i];
       const s = d.sprite;
 
+      if (now < d.ready) continue;
+
       const dist = P.Math.Distance.Between(
         p.x, p.y, s.x, s.y
       );
 
-      if (dist < 130) {
+      if (dist < 135) {
         s.x += (p.x - s.x) * Math.min(1, dt * 6);
-        s.y += (p.y - 28 - s.y) * Math.min(1, dt * 6);
+        s.y += (p.y - 25 - s.y) * Math.min(1, dt * 6);
       }
 
       s.setDepth(s.y + 1);
@@ -526,26 +599,26 @@ class GameScene extends P.Scene {
 
     if (
       this.monsters.length < 9 &&
-      now - this.lastSpawn > 1250
+      now - this.lastSpawn > 1200
     ) {
       this.lastSpawn = now;
-      this.spawnMonster();
+      this.spawn();
     }
 
     if (this.hp <= 0) {
       this.hp = 100;
       p.setPosition(900, 600);
-      this.cameras.main.flash(200, 255, 70, 70);
+      this.cameras.main.flash(200, 255, 65, 65);
     }
 
     this.hud.setText(
-      'HP ' + this.hp + '/100' +
+      '❤ ' + this.hp + '/100' +
       '   Gold ' + this.gold +
       '   Kills ' + this.kills +
       '\nLv.' + this.level +
-      '  EXP ' + this.exp + '/' +
+      ' EXP ' + this.exp + '/' +
       (this.level * 50) +
-      '  V0.1'
+      '  V0.2'
     );
   }
 }
