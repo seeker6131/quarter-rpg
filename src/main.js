@@ -3,9 +3,9 @@ const P = window.Phaser;
 
 if (!P) throw new Error("Phaser not loaded");
 
-const VERSION = "V0.5 PNG";
-const WORLD_W = 1800;
-const WORLD_H = 1300;
+const VERSION = "V0.6";
+const WW = 1800;
+const WH = 1300;
 const SPEED = 220;
 
 class QuarterRPG extends P.Scene {
@@ -14,28 +14,38 @@ class QuarterRPG extends P.Scene {
   }
 
   preload() {
-    for (const type of ["hero", "slime", "boar"]) {
+    const characters = ["hero", "slime", "boar"];
+    const forest = [
+      "tree", "bush", "rock", "flower",
+      "stump", "grass", "dirt", "water"
+    ];
+
+    for (const type of characters) {
       for (let i = 0; i < 4; i++) {
         this.load.image(
-          `png_${type}_${i}`,
+          `${type}_${i}`,
           `assets/${type}_${i}.png`
         );
       }
     }
 
+    for (const name of forest) {
+      this.load.image(
+        `forest_${name}`,
+        `assets/${name}.png`
+      );
+    }
+
     this.load.on("loaderror", file => {
-      console.warn("Missing asset:", file.key);
+      console.warn("Asset missing:", file.key);
     });
   }
 
   create() {
     document.getElementById("loading")?.remove();
 
-    this.physics.world.setBounds(
-      0, 0, WORLD_W, WORLD_H
-    );
-
-    this.cameras.main.setBackgroundColor("#284b38");
+    this.physics.world.setBounds(0, 0, WW, WH);
+    this.cameras.main.setBackgroundColor("#285a40");
 
     this.gold = 0;
     this.gems = 0;
@@ -47,10 +57,12 @@ class QuarterRPG extends P.Scene {
 
     this.monsters = [];
     this.drops = [];
+
     this.joy = { x: 0, y: 0 };
     this.joyPointer = null;
     this.attackPointer = null;
     this.attackHeld = false;
+
     this.facing = 1;
     this.lastAttack = -1000;
     this.lastSkill = -5000;
@@ -58,7 +70,7 @@ class QuarterRPG extends P.Scene {
     this.lastHUD = 0;
     this.fps = 60;
 
-    this.makeFallbackTextures();
+    this.makeFallbacks();
     this.makeMap();
 
     this.player = this.makeActor(
@@ -70,12 +82,11 @@ class QuarterRPG extends P.Scene {
     }
 
     this.cameras.main
-      .setBounds(0, 0, WORLD_W, WORLD_H)
+      .setBounds(0, 0, WW, WH)
       .startFollow(
         this.player.sprite, true, 0.12, 0.12
-      );
-
-    this.cameras.main.setRoundPixels(true);
+      )
+      .setRoundPixels(true);
 
     this.makeUI();
     this.makeControls();
@@ -84,227 +95,264 @@ class QuarterRPG extends P.Scene {
     this.scale.on("resize", this.layout, this);
   }
 
-  // Fallback pixel-art textures.
-  makeFallbackTextures() {
+  makeFallbacks() {
     const g = this.make.graphics({ x: 0, y: 0 });
 
-    const r = (x, y, w, h, color) => {
-      g.fillStyle(color);
-      g.fillRect(x * 3, y * 3, w * 3, h * 3);
+    const rect = (x, y, w, h, c) => {
+      g.fillStyle(c);
+      g.fillRect(x, y, w, h);
     };
 
     const save = (name, w, h) => {
-      g.generateTexture(name, w * 3, h * 3);
+      g.generateTexture(name, w, h);
       g.clear();
     };
 
-    for (let f = 0; f < 4; f++) {
-      const step = [0, 1, 0, -1][f];
-
-      // Hero
-      r(9, 25, 7, 10, 0x18263b);
-      r(20, 25, 7, 10, 0x18263b);
-      r(8, 32 + step, 9, 4, 0x304c6c);
-      r(19, 32 - step, 9, 4, 0x304c6c);
-
-      r(6, 13, 25, 16, 0x16283f);
-      r(9, 15, 19, 13, 0x246ba7);
-      r(11, 17, 13, 5, 0x59a9d6);
-
-      r(5, 17, 6, 10, 0xc89367);
-      r(28, 17, 6, 10, 0xc89367);
-
-      r(10, 4, 19, 13, 0x4c3025);
-      r(12, 6, 16, 11, 0xe8af7c);
-      r(9, 3, 19, 6, 0x65402a);
-      r(23, 10, 2, 2, 0x142235);
-
-      r(8, 14, 23, 4, 0xc5333c);
-      r(3 - step, 17, 10, 3, 0xe4474a);
-
-      r(32, 15, 3, 15, 0x74502f);
-      r(30, 15, 7, 3, 0xf5c66b);
-      r(32, 3, 4, 12, 0x8dd9f5);
-      r(33, 1, 2, 3, 0xffffff);
-
-      save(`fallback_hero_${f}`, 40, 38);
-
-      // Slime
-      r(3, 12 + step, 23, 10, 0x173d2b);
-      r(5, 9 + step, 19, 11, 0x349655);
-      r(7, 5 + step, 15, 11, 0x74dc80);
-      r(8, 7 + step, 6, 3, 0xb3f5a1);
-      r(9, 14 + step, 3, 3, 0x172c2a);
-      r(19, 14 + step, 3, 3, 0x172c2a);
-
-      save(`fallback_slime_${f}`, 30, 25);
-
-      // Boar
-      r(5, 10, 24, 15, 0x493020);
-      r(7, 9, 21, 13, 0x95613e);
-      r(2, 13, 12, 11, 0xa9714b);
-      r(1, 17, 8, 5, 0xc38b60);
-      r(7, 14, 3, 3, 0x15202a);
-      r(10, 22, 4, 4, 0xffe4b2);
-      r(12, 24, 5, 7 + step, 0x3d2a22);
-      r(24, 24, 5, 7 - step, 0x3d2a22);
-      r(25, 6, 6, 8, 0x5a3928);
-
-      save(`fallback_boar_${f}`, 35, 35);
+    // Fallback characters
+    for (const type of ["hero", "slime", "boar"]) {
+      for (let i = 0; i < 4; i++) {
+        if (type === "hero") {
+          rect(16, 4, 22, 19, 0x754b2c);
+          rect(19, 12, 18, 16, 0xf2bc86);
+          rect(12, 29, 30, 24, 0x2367a1);
+          rect(10, 29, 33, 6, 0xc73743);
+          rect(17, 53, 9, 16, 0x1c2c45);
+          rect(30, 53, 9, 16, 0x1c2c45);
+          rect(45, 12, 5, 40, 0xbceaff);
+          save(`fallback_${type}_${i}`, 60, 72);
+        } else if (type === "slime") {
+          g.fillStyle(0x48b967);
+          g.fillEllipse(32, 34 + i % 2, 54, 43);
+          rect(18, 31, 6, 7, 0x19352c);
+          rect(40, 31, 6, 7, 0x19352c);
+          save(`fallback_${type}_${i}`, 64, 56);
+        } else {
+          g.fillStyle(0x91613f);
+          g.fillEllipse(37, 32, 62, 42);
+          rect(5, 24, 20, 19, 0xb67b50);
+          rect(12, 26, 5, 5, 0x1d2529);
+          rect(18, 44, 7, 14, 0x493022);
+          rect(49, 44, 7, 14, 0x493022);
+          save(`fallback_${type}_${i}`, 76, 62);
+        }
+      }
     }
 
-    // Trees
-    r(13, 24, 9, 17, 0x513324);
-    r(15, 24, 5, 16, 0x9b653b);
-    r(4, 15, 29, 15, 0x173d2d);
-    r(3, 10, 31, 16, 0x286440);
-    r(7, 4, 25, 16, 0x3f8c50);
-    r(11, 2, 18, 11, 0x68b66a);
-    r(8, 11, 8, 5, 0x83c777);
-    save("tree", 37, 42);
-
-    // Rock
-    r(2, 9, 24, 10, 0x263941);
-    r(5, 5, 19, 11, 0x657a80);
-    r(8, 3, 13, 6, 0xa6b4b0);
-    save("rock", 29, 21);
-
-    // Bush
-    r(2, 8, 22, 10, 0x19472f);
-    r(5, 5, 18, 11, 0x3c8b4c);
-    r(9, 2, 11, 8, 0x6dbb68);
-    save("bush", 27, 20);
-
     // Coin
-    r(2, 1, 9, 10, 0xb87a26);
-    r(3, 2, 7, 8, 0xffd454);
-    r(5, 3, 3, 5, 0xffef9b);
-    save("coin", 13, 12);
+    g.fillStyle(0xffd35c);
+    g.fillCircle(12, 12, 10);
+    g.lineStyle(3, 0xa36a26);
+    g.strokeCircle(12, 12, 10);
+    save("coin", 24, 24);
 
     // Gem
-    r(5, 0, 3, 3, 0xd5faff);
-    r(3, 3, 7, 5, 0x70d9ff);
-    r(2, 8, 9, 3, 0x248dc9);
-    r(5, 11, 3, 3, 0x1d5e9e);
-    save("gem", 13, 15);
+    g.fillStyle(0x65d8ff);
+    g.fillPoints([
+      { x: 12, y: 0 },
+      { x: 22, y: 12 },
+      { x: 12, y: 26 },
+      { x: 2, y: 12 }
+    ], true);
+    save("gem", 24, 28);
+
+    // Fallback scenery
+    rect(12, 38, 16, 25, 0x825331);
+    g.fillStyle(0x327d47);
+    g.fillCircle(20, 27, 24);
+    save("fallback_tree", 44, 66);
+
+    g.fillStyle(0x438e50);
+    g.fillEllipse(24, 22, 45, 30);
+    save("fallback_bush", 48, 39);
+
+    g.fillStyle(0x778a87);
+    g.fillEllipse(25, 20, 46, 29);
+    save("fallback_rock", 50, 36);
+
+    rect(9, 6, 4, 20, 0x439b4d);
+    g.fillStyle(0xffd58a);
+    g.fillCircle(11, 7, 7);
+    save("fallback_flower", 23, 29);
+
+    rect(6, 8, 31, 20, 0x81502e);
+    g.fillStyle(0xb8814c);
+    g.fillEllipse(21, 9, 32, 13);
+    save("fallback_stump", 43, 30);
+
+    for (const [name, color] of [
+      ["grass", 0x356d43],
+      ["dirt", 0xa88a5b],
+      ["water", 0x287da5]
+    ]) {
+      rect(0, 0, 64, 64, color);
+      save(`fallback_${name}`, 64, 64);
+    }
 
     g.destroy();
   }
 
-  textureFor(type, frame) {
-    const png = `png_${type}_${frame}`;
+  texture(name) {
+    const key = `forest_${name}`;
 
-    if (this.textures.exists(png)) return png;
+    return this.textures.exists(key)
+      ? key
+      : `fallback_${name}`;
+  }
 
-    return `fallback_${type}_${frame}`;
+  characterTexture(type, frame) {
+    const key = `${type}_${frame}`;
+
+    return this.textures.exists(key)
+      ? key
+      : `fallback_${type}_${frame}`;
   }
 
   makeMap() {
-    const g = this.add.graphics()
-      .setDepth(-10000);
+    // Ground textures are created once.
+    this.add.tileSprite(
+      WW / 2, WH / 2,
+      WW, WH,
+      this.texture("grass")
+    ).setDepth(-10000);
 
-    g.fillStyle(0x315d43);
-    g.fillRect(0, 0, WORLD_W, WORLD_H);
+    // Dirt path
+    const road = this.add.graphics()
+      .setDepth(-9999);
 
-    // Grass details
-    for (let i = 0; i < 1600; i++) {
-      const x = P.Math.Between(0, WORLD_W);
-      const y = P.Math.Between(0, WORLD_H);
+    road.fillStyle(0x5c4b33);
+    road.fillEllipse(900, 700, 1520, 340);
 
-      g.fillStyle(
-        i % 2 ? 0x55864f : 0x76a764,
-        0.55
+    road.fillStyle(0x9c8052);
+    road.fillEllipse(900, 690, 1470, 290);
+
+    road.fillStyle(0xb79a68, 0.65);
+    road.fillEllipse(900, 685, 1390, 240);
+
+    // Path decoration
+    for (let i = 0; i < 220; i++) {
+      const x = P.Math.Between(180, 1600);
+      const y = P.Math.Between(615, 785);
+
+      road.fillStyle(
+        i % 2 ? 0xd0b17c : 0x796343,
+        0.5
       );
-      g.fillRect(x, y, 5, 3);
+
+      road.fillRect(x, y, 5, 3);
     }
-
-    // Dirt road
-    g.fillStyle(0x5d5238);
-    g.fillEllipse(900, 690, 1510, 330);
-
-    g.fillStyle(0x9b8255);
-    g.fillEllipse(900, 680, 1450, 275);
-
-    g.fillStyle(0xb9a06d, 0.45);
-    g.fillEllipse(900, 675, 1320, 205);
 
     // River
-    g.fillStyle(0x163e59);
-    g.fillRect(1290, 0, 300, 510);
-
-    g.fillStyle(0x287fa8);
-    g.fillRect(1305, 0, 270, 500);
-
-    for (let i = 0; i < 110; i++) {
-      const x = P.Math.Between(1310, 1570);
-      const y = P.Math.Between(0, 490);
-
-      g.fillStyle(0xb6effa, 0.45);
-      g.fillRect(x, y, 15, 3);
-    }
+    this.add.tileSprite(
+      1440, 250,
+      300, 500,
+      this.texture("water")
+    ).setDepth(-9998);
 
     // Wooden bridge
-    g.fillStyle(0x3a2c22);
-    g.fillRect(1250, 220, 390, 120);
+    const bridge = this.add.graphics()
+      .setDepth(-9997);
 
-    for (let x = 1260; x < 1630; x += 25) {
-      g.fillStyle(0x9f7042);
-      g.fillRect(x, 230, 22, 100);
+    bridge.fillStyle(0x392a21);
+    bridge.fillRect(1240, 215, 390, 120);
 
-      g.fillStyle(0x523a29);
-      g.fillRect(x, 230, 3, 100);
+    for (let x = 1250; x < 1620; x += 27) {
+      bridge.fillStyle(
+        x % 2 ? 0x9b6b3e : 0xb37c45
+      );
+      bridge.fillRect(x, 224, 24, 100);
+
+      bridge.fillStyle(0x4e3827);
+      bridge.fillRect(x, 224, 3, 100);
     }
 
-    // Trees and scenery
-    for (let i = 0; i < 100; i++) {
-      const x = P.Math.Between(60, WORLD_W - 60);
-      const y = P.Math.Between(60, WORLD_H - 60);
+    // Forest scenery
+    for (let i = 0; i < 145; i++) {
+      const x = P.Math.Between(65, WW - 65);
+      const y = P.Math.Between(65, WH - 65);
 
-      if (Math.hypot(x - 900, y - 650) < 240)
+      if (Math.hypot(x - 900, y - 650) < 235)
         continue;
 
-      if (x > 1280 && x < 1600 && y < 520)
+      if (x > 1270 && x < 1610 && y < 510)
         continue;
 
-      const n = P.Math.Between(0, 9);
-      const type = n < 5 ? "tree"
-        : n < 8 ? "bush" : "rock";
+      const n = P.Math.Between(0, 99);
 
-      this.add.ellipse(
-        x, y,
-        type === "tree" ? 75 : 42,
-        14, 0x0c291e, 0.4
-      ).setDepth(y - 1);
+      const type = n < 37 ? "tree"
+        : n < 60 ? "bush"
+        : n < 75 ? "rock"
+        : n < 90 ? "flower"
+        : "stump";
 
-      this.add.image(x, y, type)
-        .setOrigin(0.5, 1)
-        .setDepth(y);
+      this.addScenery(x, y, type);
     }
+
+    // Additional forest clusters
+    for (const [x, y, type] of [
+      [600, 450, "tree"],
+      [720, 450, "tree"],
+      [1150, 470, "tree"],
+      [530, 890, "tree"],
+      [1260, 900, "tree"],
+      [800, 510, "bush"],
+      [1090, 520, "bush"],
+      [730, 850, "rock"],
+      [1100, 850, "rock"],
+      [830, 590, "flower"],
+      [1040, 590, "flower"]
+    ]) {
+      this.addScenery(x, y, type);
+    }
+  }
+
+  addScenery(x, y, type) {
+    const sizes = {
+      tree: 155,
+      bush: 67,
+      rock: 57,
+      flower: 32,
+      stump: 51
+    };
+
+    const key = this.texture(type);
+    const source = this.textures.get(key).getSourceImage();
+    const scale = sizes[type] / source.height;
+
+    const shadowWidth =
+      type === "tree" ? 78 : 39;
+
+    this.add.ellipse(
+      x, y,
+      shadowWidth, 13,
+      0x0b261b, 0.3
+    ).setDepth(y - 1);
+
+    this.add.image(x, y, key)
+      .setOrigin(0.5, 1)
+      .setScale(scale)
+      .setDepth(y);
   }
 
   makeActor(type, x, y) {
     const isHero = type === "hero";
 
     const sprite = this.physics.add.sprite(
-      x, y, this.textureFor(type, 0)
+      x, y,
+      this.characterTexture(type, 0)
     ).setOrigin(0.5, 1);
 
-    // Normalize PNG and fallback sizes.
     const targetHeight = isHero ? 112
       : type === "boar" ? 90 : 76;
 
-    const tex = sprite.texture.getSourceImage();
+    const source = sprite.texture.getSourceImage();
+    const scale = targetHeight / source.height;
 
-    const scale = targetHeight / tex.height;
     sprite.setScale(scale);
 
-    // World-space collision box.
     const bw = isHero ? 34 : 38;
     const bh = 18;
 
-    sprite.body.setSize(
-      bw / scale, bh / scale
-    );
+    sprite.body.setSize(bw / scale, bh / scale);
 
     sprite.body.setOffset(
       (sprite.width - bw / scale) / 2,
@@ -315,7 +363,8 @@ class QuarterRPG extends P.Scene {
     sprite.setDepth(y);
 
     const shadow = this.add.ellipse(
-      x, y, isHero ? 48 : 52,
+      x, y,
+      isHero ? 48 : 52,
       14, 0x09271c, 0.4
     ).setDepth(y - 1);
 
@@ -334,8 +383,8 @@ class QuarterRPG extends P.Scene {
   }
 
   spawnMonster() {
-    const x = P.Math.Between(100, WORLD_W - 100);
-    const y = P.Math.Between(100, WORLD_H - 100);
+    const x = P.Math.Between(100, WW - 100);
+    const y = P.Math.Between(100, WH - 100);
 
     if (Math.hypot(
       x - this.player.sprite.x,
@@ -490,7 +539,8 @@ class QuarterRPG extends P.Scene {
         this.joy = { x: 0, y: 0 };
 
         this.joyKnob.setPosition(
-          this.joyBase.x, this.joyBase.y
+          this.joyBase.x,
+          this.joyBase.y
         );
       }
 
@@ -508,7 +558,6 @@ class QuarterRPG extends P.Scene {
     const dx = p.x - this.joyBase.x;
     const dy = p.y - this.joyBase.y;
     const dist = Math.hypot(dx, dy);
-
     const amount = Math.min(1, dist / 55);
 
     this.joy = dist ? {
@@ -530,11 +579,12 @@ class QuarterRPG extends P.Scene {
     a.lastFrame = now;
     a.frame = (a.frame + 1) % 4;
 
-    const key = this.textureFor(a.type, a.frame);
+    const key = this.characterTexture(
+      a.type, a.frame
+    );
 
     a.sprite.setTexture(key);
 
-    // Keep PNG frames the same on-screen height.
     const targetHeight = a.type === "hero"
       ? 112 : a.type === "boar" ? 90 : 76;
 
@@ -600,7 +650,7 @@ class QuarterRPG extends P.Scene {
 
     this.floatingDamage(
       m.sprite.x,
-      m.sprite.y - 75,
+      m.sprite.y - m.sprite.displayHeight - 10,
       damage
     );
 
@@ -798,7 +848,7 @@ class QuarterRPG extends P.Scene {
     this.hudText.setFontSize(w < 450 ? 12 : 14);
 
     this.hudText.setText(
-      `LV.${this.level}  HP ${this.hp}/${this.maxHp}` +
+      `LV.${this.level} HP ${this.hp}/${this.maxHp}` +
       `\n\n\nGOLD ${this.gold} GEM ${this.gems}` +
       ` KILLS ${this.kills} ${VERSION}`
     );
@@ -886,14 +936,17 @@ class QuarterRPG extends P.Scene {
       m.bar.clear();
 
       if (dist < 450) {
+        const barY =
+          s.y - s.displayHeight - 14;
+
         m.bar.fillStyle(0x1b2822);
         m.bar.fillRect(
-          s.x - 27, s.y - 90, 54, 8
+          s.x - 27, barY, 54, 8
         );
 
         m.bar.fillStyle(0xd84942);
         m.bar.fillRect(
-          s.x - 26, s.y - 89,
+          s.x - 26, barY + 1,
           52 * Math.max(0, m.hp / m.maxHp),
           6
         );
