@@ -2,9 +2,10 @@
 const P = window.Phaser;
 if (!P) throw new Error("Phaser 3 is required");
 
+const VERSION = "V0.8";
 const WORLD_W = 1800;
 const WORLD_H = 1300;
-const VERSION = "V0.7";
+const HERO_SPEED = 215;
 const DIRS = ["down", "up", "left", "right"];
 const ACTIONS = ["idle", "walk", "attack"];
 
@@ -35,8 +36,8 @@ class QuarterRPG extends P.Scene {
     }
 
     for (const name of [
-      "tree", "bush", "rock", "flower",
-      "stump", "grass", "water"
+      "tree", "bush", "rock",
+      "flower", "stump", "grass", "water"
     ]) {
       this.load.image(
         `forest_${name}`,
@@ -44,8 +45,8 @@ class QuarterRPG extends P.Scene {
       );
     }
 
-    this.load.on("loaderror", f => {
-      console.warn("Missing asset:", f.key);
+    this.load.on("loaderror", file => {
+      console.warn("Missing:", file.key);
     });
   }
 
@@ -68,17 +69,28 @@ class QuarterRPG extends P.Scene {
 
     this.monsters = [];
     this.drops = [];
+
     this.joy = { x: 0, y: 0 };
     this.joyId = null;
     this.attackId = null;
     this.attackHeld = false;
+
     this.direction = "down";
-    this.action = "idle";
+    this.action = "";
     this.attacking = false;
+
+    this.combo = 0;
+    this.comboUntil = 0;
     this.lastAttack = -1000;
+    this.attackEnd = 0;
+    this.attackImpact = 0;
+    this.attackHitDone = false;
+    this.attackDir = "down";
+
     this.lastSkill = -5000;
     this.lastSpawn = 0;
     this.lastHud = 0;
+    this.lastDamage = -1000;
     this.fps = 60;
 
     this.makeFallbacks();
@@ -87,18 +99,18 @@ class QuarterRPG extends P.Scene {
 
     this.hero = this.physics.add.sprite(
       900, 650,
-      this.heroKey("idle", "down")
-    );
+      this.heroTexture("idle", "down")
+    ).setOrigin(0.5, 1);
 
-    this.hero.setOrigin(0.5, 1);
     this.hero.setDisplaySize(104, 117);
     this.hero.setCollideWorldBounds(true);
+
     this.hero.body.setSize(70, 24);
     this.hero.body.setOffset(93, 255);
 
     this.heroShadow = this.add.ellipse(
-      900, 650, 49, 13,
-      0x102c21, 0.45
+      900, 650, 48, 13,
+      0x102c21, 0.42
     );
 
     this.playHero("idle", "down");
@@ -127,31 +139,32 @@ class QuarterRPG extends P.Scene {
       g.clear();
     };
 
+    // Missing character frames
     for (const type of ["slime", "boar"]) {
       for (let i = 0; i < 4; i++) {
         if (type === "slime") {
-          g.fillStyle(0x54c975);
-          g.fillEllipse(32, 34 + i % 2, 55, 42);
-          g.fillStyle(0x193c2e);
-          g.fillRect(20, 30, 6, 7);
-          g.fillRect(40, 30, 6, 7);
+          g.fillStyle(0x42b967);
+          g.fillEllipse(32, 34 + i % 2, 54, 42);
+          g.fillStyle(0x19372c);
+          g.fillRect(19, 31, 6, 7);
+          g.fillRect(40, 31, 6, 7);
           save(`fallback_${type}_${i}`, 64, 56);
         } else {
-          g.fillStyle(0x93613e);
-          g.fillEllipse(36, 30, 62, 43);
-          g.fillStyle(0x4c3025);
-          g.fillRect(18, 46, 8, 14);
-          g.fillRect(47, 46, 8, 14);
-          save(`fallback_${type}_${i}`, 74, 64);
+          g.fillStyle(0x95623f);
+          g.fillEllipse(37, 31, 61, 43);
+          g.fillStyle(0x493025);
+          g.fillRect(17, 45, 8, 15);
+          g.fillRect(48, 45, 8, 15);
+          save(`fallback_${type}_${i}`, 76, 64);
         }
       }
     }
 
-    g.fillStyle(0xffd459);
+    g.fillStyle(0xffd35b);
     g.fillCircle(12, 12, 10);
     save("loot_coin", 24, 24);
 
-    g.fillStyle(0x6cdfff);
+    g.fillStyle(0x69d9ff);
     g.fillPoints([
       { x: 12, y: 0 },
       { x: 23, y: 12 },
@@ -160,79 +173,75 @@ class QuarterRPG extends P.Scene {
     ], true);
     save("loot_gem", 24, 28);
 
-    g.fillStyle(0x326c43);
-    g.fillRect(0, 0, 64, 64);
-    save("fallback_grass", 64, 64);
-
-    g.fillStyle(0x2d7ca7);
-    g.fillRect(0, 0, 64, 64);
-    save("fallback_water", 64, 64);
-
-    g.fillStyle(0x3e9051);
-    g.fillCircle(24, 24, 22);
-    save("fallback_tree", 48, 52);
-
-    for (const name of [
-      "bush", "rock", "flower", "stump"
+    for (const [name, color] of [
+      ["grass", 0x346c43],
+      ["water", 0x277ba4],
+      ["tree", 0x327c48],
+      ["bush", 0x489354],
+      ["rock", 0x83918c],
+      ["flower", 0xf5c76e],
+      ["stump", 0x82512f]
     ]) {
-      g.fillStyle(
-        name === "rock" ? 0x87938c : 0x56a15b
-      );
-      g.fillEllipse(24, 20, 43, 30);
-      save(`fallback_${name}`, 48, 40);
+      g.fillStyle(color);
+      g.fillRect(0, 0, 64, 64);
+      save(`fallback_${name}`, 64, 64);
     }
 
-    // Hero fallback sprite sheet.
-    const sheet = this.make.graphics({ x: 0, y: 0 });
+    // Emergency hero fallback: 8-frame sheet
+    const h = this.make.graphics({ x: 0, y: 0 });
 
-    for (let f = 0; f < 8; f++) {
-      const x = f * 256 + 105;
-      sheet.fillStyle(0x5a3929);
-      sheet.fillRect(x, 45, 47, 35);
-      sheet.fillStyle(0xe6ae7c);
-      sheet.fillRect(x + 5, 75, 38, 42);
-      sheet.fillStyle(0x3478b4);
-      sheet.fillRect(x, 120, 48, 65);
-      sheet.fillStyle(0xc83743);
-      sheet.fillRect(x - 8, 119, 60, 12);
-      sheet.fillStyle(0x243a5a);
-      sheet.fillRect(
-        x + 3 + (f % 2 ? 8 : 0),
-        185, 17, 58
-      );
-      sheet.fillRect(
-        x + 28 - (f % 2 ? 8 : 0),
-        185, 17, 58
-      );
-      sheet.fillStyle(0x9fe4fa);
-      sheet.fillRect(x + 55, 90, 8, 100);
+    for (let i = 0; i < 8; i++) {
+      const x = i * 256 + 104;
+      const stride = i % 2 ? 12 : -12;
+
+      h.fillStyle(0x623c29);
+      h.fillRect(x, 45, 48, 35);
+
+      h.fillStyle(0xe8ad79);
+      h.fillRect(x + 5, 75, 38, 42);
+
+      h.fillStyle(0x347db4);
+      h.fillRect(x, 120, 48, 65);
+
+      h.fillStyle(0xc73743);
+      h.fillRect(x - 9, 120, 61, 12);
+
+      h.fillStyle(0x233954);
+      h.fillRect(x + 3 + stride, 185, 16, 58);
+      h.fillRect(x + 28 - stride, 185, 16, 58);
+
+      h.fillStyle(0xaeeaff);
+      h.fillRect(x + 55, 91, 8, 100);
     }
 
-    sheet.generateTexture(
-      "hero_fallback", 2048, 288
-    );
-
-    sheet.destroy();
-
-    this.textures.get("hero_fallback")
-      .add("0", 0, 0, 0, 256, 288);
-
+    h.generateTexture("hero_fallback", 2048, 288);
+    h.destroy();
     g.destroy();
   }
 
-  heroKey(action, dir) {
+  heroTexture(action, dir) {
     const key = `hero_${action}_${dir}`;
     return this.textures.exists(key)
       ? key : "hero_fallback";
   }
 
+  forestTexture(name) {
+    const key = `forest_${name}`;
+    return this.textures.exists(key)
+      ? key : `fallback_${name}`;
+  }
+
+  monsterTexture(type, frame) {
+    const key = `${type}_${frame}`;
+    return this.textures.exists(key)
+      ? key : `fallback_${type}_${frame}`;
+  }
+
   makeAnimations() {
     for (const action of ACTIONS) {
       for (const dir of DIRS) {
-        const texture = this.heroKey(action, dir);
+        const texture = this.heroTexture(action, dir);
         const key = `anim_${action}_${dir}`;
-
-        if (this.anims.exists(key)) continue;
 
         const frames = [];
 
@@ -245,18 +254,14 @@ class QuarterRPG extends P.Scene {
           }
         } else {
           for (let i = 0; i < 8; i++) {
-            frames.push({
-              key: texture,
-              frame: i
-            });
+            frames.push({ key: texture, frame: i });
           }
         }
 
         this.anims.create({
           key,
           frames,
-          frameRate:
-            action === "attack" ? 15 :
+          frameRate: action === "attack" ? 17 :
             action === "walk" ? 12 : 5,
           repeat: action === "attack" ? 0 : -1
         });
@@ -264,10 +269,11 @@ class QuarterRPG extends P.Scene {
     }
   }
 
-  playHero(action, dir) {
+  playHero(action, dir, restart = false) {
     const key = `anim_${action}_${dir}`;
 
     if (
+      !restart &&
       this.action === action &&
       this.direction === dir &&
       this.hero.anims.isPlaying
@@ -275,15 +281,7 @@ class QuarterRPG extends P.Scene {
 
     this.action = action;
     this.direction = dir;
-
     this.hero.play(key, true);
-  }
-
-  forestTexture(name) {
-    const key = `forest_${name}`;
-
-    return this.textures.exists(key)
-      ? key : `fallback_${name}`;
   }
 
   makeMap() {
@@ -296,14 +294,14 @@ class QuarterRPG extends P.Scene {
     const ground = this.add.graphics()
       .setDepth(-9999);
 
-    ground.fillStyle(0x584932);
+    ground.fillStyle(0x5b4932);
     ground.fillEllipse(900, 700, 1520, 345);
 
-    ground.fillStyle(0xa48a5b);
+    ground.fillStyle(0xa58b5d);
     ground.fillEllipse(900, 690, 1450, 280);
 
-    ground.fillStyle(0xb59a69, 0.5);
-    ground.fillEllipse(900, 685, 1350, 225);
+    ground.fillStyle(0xbda16f, 0.45);
+    ground.fillEllipse(900, 685, 1350, 220);
 
     this.add.tileSprite(
       1440, 250, 300, 500,
@@ -313,22 +311,21 @@ class QuarterRPG extends P.Scene {
     const bridge = this.add.graphics()
       .setDepth(-9997);
 
-    bridge.fillStyle(0x3e2d20);
+    bridge.fillStyle(0x392b22);
     bridge.fillRect(1240, 215, 390, 120);
 
     for (let x = 1250; x < 1620; x += 27) {
-      bridge.fillStyle(0xa67946);
+      bridge.fillStyle(0xa87845);
       bridge.fillRect(x, 225, 24, 100);
-      bridge.fillStyle(0x573d29);
+      bridge.fillStyle(0x4c3526);
       bridge.fillRect(x, 225, 3, 100);
     }
 
-    // Fewer objects to keep paths readable.
     for (let i = 0; i < 100; i++) {
       const x = P.Math.Between(70, 1730);
       const y = P.Math.Between(70, 1230);
 
-      if (Math.hypot(x - 900, y - 650) < 280)
+      if (Math.hypot(x - 900, y - 650) < 270)
         continue;
 
       if (x > 1250 && x < 1620 && y < 510)
@@ -340,10 +337,9 @@ class QuarterRPG extends P.Scene {
         : n < 72 ? "rock"
         : n < 91 ? "flower" : "stump";
 
-      const key = this.forestTexture(type);
-      const image = this.add.image(x, y, key)
-        .setOrigin(0.5, 1)
-        .setDepth(y);
+      const img = this.add.image(
+        x, y, this.forestTexture(type)
+      ).setOrigin(0.5, 1);
 
       const height = {
         tree: 145,
@@ -353,15 +349,9 @@ class QuarterRPG extends P.Scene {
         stump: 45
       }[type];
 
-      image.setScale(height / image.height);
+      img.setScale(height / img.height);
+      img.setDepth(y);
     }
-  }
-
-  monsterTexture(type, frame) {
-    const key = `${type}_${frame}`;
-
-    return this.textures.exists(key)
-      ? key : `fallback_${type}_${frame}`;
   }
 
   spawnMonster() {
@@ -388,10 +378,11 @@ class QuarterRPG extends P.Scene {
     sprite.setCollideWorldBounds(true);
 
     const shadow = this.add.ellipse(
-      x, y, 47, 12, 0x102c21, 0.4
+      x, y, 48, 12,
+      0x102c21, 0.4
     );
 
-    const monster = {
+    this.monsters.push({
       type,
       sprite,
       shadow,
@@ -401,15 +392,17 @@ class QuarterRPG extends P.Scene {
       frame: 0,
       lastFrame: 0,
       lastHit: 0,
-      speed: type === "boar" ? 90 : 75
-    };
-
-    this.monsters.push(monster);
+      speed: type === "boar" ? 92 : 76,
+      knockX: 0,
+      knockY: 0,
+      knockUntil: 0,
+      hurtUntil: 0
+    });
   }
 
   makeUI() {
-    const fixed = obj =>
-      obj.setScrollFactor(0).setDepth(20000);
+    const fixed = o =>
+      o.setScrollFactor(0).setDepth(20000);
 
     this.hud = fixed(this.add.graphics());
 
@@ -431,6 +424,17 @@ class QuarterRPG extends P.Scene {
         padding: { x: 8, y: 6 }
       }
     ));
+
+    this.comboText = fixed(this.add.text(
+      0, 130, "", {
+        fontFamily: "system-ui",
+        fontSize: "23px",
+        fontStyle: "bold",
+        color: "#ffe28d",
+        stroke: "#30211c",
+        strokeThickness: 4
+      }
+    ).setOrigin(0.5));
 
     this.joyBase = fixed(this.add.circle(
       90, 0, 61, 0x142e40, 0.72
@@ -473,18 +477,19 @@ class QuarterRPG extends P.Scene {
 
     this.joyBase.setPosition(joyX, y);
     this.joyKnob.setPosition(joyX, y);
+
     this.attackButton.setPosition(atkX, y);
     this.attackLabel.setPosition(atkX, y);
 
     this.skillButton.setPosition(
       atkX - 30, y - 105
     );
-
     this.skillLabel.setPosition(
       atkX - 30, y - 105
     );
 
     this.fpsText.setPosition(w - 90, 15);
+    this.comboText.setPosition(w / 2, 140);
   }
 
   makeControls() {
@@ -533,19 +538,15 @@ class QuarterRPG extends P.Scene {
     });
 
     this.input.on("pointermove", p => {
-      if (p.id === this.joyId) {
-        this.moveJoy(p);
-      }
+      if (p.id === this.joyId) this.moveJoy(p);
     });
 
     const release = p => {
       if (p.id === this.joyId) {
         this.joyId = null;
         this.joy = { x: 0, y: 0 };
-
         this.joyKnob.setPosition(
-          this.joyBase.x,
-          this.joyBase.y
+          this.joyBase.x, this.joyBase.y
         );
       }
 
@@ -562,12 +563,12 @@ class QuarterRPG extends P.Scene {
   moveJoy(p) {
     const dx = p.x - this.joyBase.x;
     const dy = p.y - this.joyBase.y;
-    const distance = Math.hypot(dx, dy);
-    const strength = Math.min(1, distance / 55);
+    const dist = Math.hypot(dx, dy);
+    const amount = Math.min(1, dist / 55);
 
-    this.joy = distance ? {
-      x: dx / distance * strength,
-      y: dy / distance * strength
+    this.joy = dist ? {
+      x: dx / dist * amount,
+      y: dy / dist * amount
     } : { x: 0, y: 0 };
 
     this.joyKnob.setPosition(
@@ -577,122 +578,180 @@ class QuarterRPG extends P.Scene {
   }
 
   facingFromInput(x, y) {
+    // Diagonal movement is supported;
+    // visual direction uses nearest cardinal sprite.
     if (Math.abs(x) > Math.abs(y)) {
       return x < 0 ? "left" : "right";
     }
-
     return y < 0 ? "up" : "down";
   }
 
-  slash(x, y, angle) {
+  directionVector(dir) {
+    return {
+      up: [0, -1],
+      down: [0, 1],
+      left: [-1, 0],
+      right: [1, 0]
+    }[dir];
+  }
+
+  slashFX(x, y, dir, combo) {
+    const [dx, dy] = this.directionVector(dir);
+    const angle = Math.atan2(dy, dx);
+
     const g = this.add.graphics()
-      .setPosition(x, y)
+      .setPosition(x, y - 42)
       .setRotation(angle)
       .setDepth(15000);
 
-    g.lineStyle(9, 0x2589df, 0.55);
+    const radius = combo === 3 ? 75 : 55;
+    const color = combo === 3
+      ? 0xffd46c : 0x9eeaff;
+
+    g.lineStyle(
+      combo === 3 ? 15 : 10,
+      color, 0.7
+    );
+
     g.beginPath();
-    g.arc(0, 0, 45, -1.1, 1.1);
+    g.arc(0, 0, radius, -1.05, 1.05);
     g.strokePath();
 
-    g.lineStyle(4, 0xc5f6ff);
+    g.lineStyle(4, 0xffffff);
     g.beginPath();
-    g.arc(0, 0, 45, -1.1, 1.1);
+    g.arc(0, 0, radius, -1.05, 1.05);
     g.strokePath();
+
+    if (combo === 2) g.setScale(1, -1);
 
     this.tweens.add({
       targets: g,
       alpha: 0,
       scaleX: 1.3,
-      scaleY: 1.3,
-      duration: 200,
+      duration: 160,
       onComplete: () => g.destroy()
     });
   }
 
-  attack(now) {
-    if (
-      this.attacking ||
-      now - this.lastAttack < 550
-    ) return;
-
-    this.lastAttack = now;
-    this.attacking = true;
-
-    this.playHero("attack", this.direction);
-
-    const dir = this.direction;
-
-    this.time.delayedCall(210, () => {
-      const offsets = {
-        up: [0, -65],
-        down: [0, 65],
-        left: [-65, 0],
-        right: [65, 0]
-      };
-
-      const [ox, oy] = offsets[dir];
-
-      this.slash(
-        this.hero.x + ox,
-        this.hero.y - 45 + oy * 0.5,
-        Math.atan2(oy, ox)
-      );
-
-      const targets = [...this.monsters];
-
-      for (const m of targets) {
-        const dx = m.sprite.x - this.hero.x;
-        const dy = m.sprite.y - this.hero.y;
-        const distance = Math.hypot(dx, dy);
-
-        if (distance > 120) continue;
-
-        const forward = dir === "up" ? -dy
-          : dir === "down" ? dy
-          : dir === "left" ? -dx : dx;
-
-        if (forward < -20) continue;
-
-        this.hitMonster(m, 18);
-      }
-    });
-
-    this.time.delayedCall(540, () => {
-      this.attacking = false;
-      this.action = "";
-    });
-  }
-
-  hitMonster(m, damage) {
-    if (!m.sprite.active) return;
-
-    m.hp -= damage;
-    m.sprite.setTintFill(0xffffff);
-
-    this.time.delayedCall(90, () => {
-      if (m.sprite.active) m.sprite.clearTint();
-    });
-
-    const damageText = this.add.text(
-      m.sprite.x,
-      m.sprite.y - m.sprite.displayHeight - 15,
-      "-" + damage, {
-        fontSize: "20px",
+  floatingText(x, y, text, color) {
+    const label = this.add.text(
+      x, y, text, {
+        fontFamily: "system-ui",
+        fontSize: "21px",
         fontStyle: "bold",
-        color: "#fff0a5",
-        stroke: "#32271e",
+        color,
+        stroke: "#30251e",
         strokeThickness: 4
       }
     ).setOrigin(0.5).setDepth(15000);
 
     this.tweens.add({
-      targets: damageText,
-      y: damageText.y - 45,
+      targets: label,
+      y: y - 45,
       alpha: 0,
       duration: 500,
-      onComplete: () => damageText.destroy()
+      onComplete: () => label.destroy()
     });
+  }
+
+  attack(now) {
+    if (this.attacking) return;
+    if (now - this.lastAttack < 290) return;
+
+    this.combo = now < this.comboUntil
+      ? this.combo % 3 + 1 : 1;
+
+    this.comboUntil = now + 1050;
+    this.lastAttack = now;
+    this.attacking = true;
+
+    this.attackDir = this.direction;
+    this.attackHitDone = false;
+
+    const duration = this.combo === 3 ? 480 : 330;
+
+    this.attackImpact = now +
+      (this.combo === 3 ? 210 : 125);
+
+    this.attackEnd = now + duration;
+
+    this.playHero(
+      "attack", this.attackDir, true
+    );
+
+    this.comboText.setText(
+      this.combo === 3
+        ? "HEAVY SLASH!"
+        : `COMBO ${this.combo}`
+    );
+
+    this.comboText.setAlpha(1);
+  }
+
+  resolveAttack() {
+    const combo = this.combo;
+    const dir = this.attackDir;
+    const [fx, fy] = this.directionVector(dir);
+
+    this.slashFX(
+      this.hero.x + fx * 45,
+      this.hero.y + fy * 30,
+      dir, combo
+    );
+
+    const reach = combo === 3 ? 145 : 115;
+    const damage = combo === 1 ? 14
+      : combo === 2 ? 18 : 30;
+
+    for (const m of [...this.monsters]) {
+      const dx = m.sprite.x - this.hero.x;
+      const dy = m.sprite.y - this.hero.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist > reach || dist < 1) continue;
+
+      const forward = dx * fx + dy * fy;
+
+      if (forward < -15) continue;
+
+      // Wider arc for heavy attack.
+      const side = Math.abs(dx * fy - dy * fx);
+      if (side > (combo === 3 ? 105 : 75))
+        continue;
+
+      this.hitMonster(m, damage, fx, fy, combo);
+    }
+
+    if (combo === 3) {
+      this.cameras.main.shake(75, 0.002);
+    }
+  }
+
+  hitMonster(m, damage, fx, fy, combo) {
+    if (!m.sprite.active) return;
+
+    m.hp -= damage;
+
+    const now = this.time.now;
+
+    m.hurtUntil = now + 160;
+    m.knockUntil = now + (
+      combo === 3 ? 270 : 160
+    );
+
+    const force = combo === 3 ? 340 : 210;
+
+    m.knockX = fx * force;
+    m.knockY = fy * force;
+
+    m.sprite.setTintFill(0xffffff);
+
+    this.floatingText(
+      m.sprite.x,
+      m.sprite.y - m.sprite.displayHeight - 12,
+      `-${damage}`,
+      combo === 3 ? "#ffcf61" : "#ffffff"
+    );
 
     if (m.hp > 0) return;
 
@@ -704,7 +763,6 @@ class QuarterRPG extends P.Scene {
     m.bar.destroy();
 
     const index = this.monsters.indexOf(m);
-
     if (index >= 0) this.monsters.splice(index, 1);
 
     this.kills++;
@@ -713,7 +771,9 @@ class QuarterRPG extends P.Scene {
     while (this.exp >= this.level * 50) {
       this.exp -= this.level * 50;
       this.level++;
-      this.hp = this.maxHp;
+      this.hp = Math.min(
+        this.maxHp, this.hp + 30
+      );
     }
 
     this.dropLoot(x, y);
@@ -721,33 +781,33 @@ class QuarterRPG extends P.Scene {
 
   useSkill(now) {
     if (now - this.lastSkill < 3500) return;
-
     this.lastSkill = now;
 
     const ring = this.add.circle(
       this.hero.x,
       this.hero.y - 30,
-      20, 0x55dfff, 0.2
-    ).setStrokeStyle(5, 0xb5f5ff)
+      20, 0x54dfff, 0.2
+    ).setStrokeStyle(5, 0xb9f6ff)
       .setDepth(15000);
 
     this.tweens.add({
       targets: ring,
-      scaleX: 7,
-      scaleY: 7,
+      scaleX: 8,
+      scaleY: 8,
       alpha: 0,
-      duration: 350,
+      duration: 330,
       onComplete: () => ring.destroy()
     });
 
     for (const m of [...this.monsters]) {
-      if (
-        P.Math.Distance.Between(
-          this.hero.x, this.hero.y,
-          m.sprite.x, m.sprite.y
-        ) < 160
-      ) {
-        this.hitMonster(m, 27);
+      const dx = m.sprite.x - this.hero.x;
+      const dy = m.sprite.y - this.hero.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < 170) {
+        const fx = dist > 0 ? dx / dist : 1;
+        const fy = dist > 0 ? dy / dist : 0;
+        this.hitMonster(m, 27, fx, fy, 3);
       }
     }
   }
@@ -778,7 +838,6 @@ class QuarterRPG extends P.Scene {
 
   updateHUD(now) {
     if (now - this.lastHud < 160) return;
-
     this.lastHud = now;
 
     const w = this.scale.width;
@@ -787,6 +846,7 @@ class QuarterRPG extends P.Scene {
     );
 
     this.hud.clear();
+
     this.hud.fillStyle(0x112638, 0.94);
     this.hud.fillRoundedRect(
       8, 8, width, 100, 7
@@ -833,7 +893,9 @@ class QuarterRPG extends P.Scene {
     const dt = Math.min(delta / 1000, 0.05);
 
     this.fps = this.fps * 0.95 +
-      Math.min(120, 1000 / Math.max(delta, 1)) * 0.05;
+      Math.min(
+        120, 1000 / Math.max(delta, 1)
+      ) * 0.05;
 
     let x = this.joy.x;
     let y = this.joy.y;
@@ -859,9 +921,27 @@ class QuarterRPG extends P.Scene {
 
     const moving = len > 0.1;
 
+    const speed = this.attacking
+      ? HERO_SPEED * 0.48 : HERO_SPEED;
+
     this.hero.setVelocity(
-      x * 210, y * 210
+      x * speed, y * speed
     );
+
+    if (this.attacking) {
+      if (
+        !this.attackHitDone &&
+        now >= this.attackImpact
+      ) {
+        this.attackHitDone = true;
+        this.resolveAttack();
+      }
+
+      if (now >= this.attackEnd) {
+        this.attacking = false;
+        this.action = "";
+      }
+    }
 
     if (!this.attacking) {
       const dir = moving
@@ -880,6 +960,7 @@ class QuarterRPG extends P.Scene {
       .setPosition(this.hero.x, this.hero.y)
       .setDepth(this.hero.y - 1);
 
+    // Monster movement, hurt, and knockback.
     for (const m of this.monsters) {
       const s = m.sprite;
 
@@ -887,7 +968,13 @@ class QuarterRPG extends P.Scene {
       const dy = this.hero.y - s.y;
       const dist = Math.hypot(dx, dy);
 
-      if (dist < 300 && dist > 53) {
+      if (now < m.knockUntil) {
+        s.setVelocity(m.knockX, m.knockY);
+
+        const friction = Math.max(0, 1 - dt * 7);
+        m.knockX *= friction;
+        m.knockY *= friction;
+      } else if (dist < 310 && dist > 55) {
         s.setVelocity(
           dx / dist * m.speed,
           dy / dist * m.speed
@@ -896,28 +983,33 @@ class QuarterRPG extends P.Scene {
         s.setVelocity(0, 0);
       }
 
-      if (now - m.lastFrame > 170) {
+      if (now >= m.hurtUntil) {
+        s.clearTint();
+      }
+
+      if (now - m.lastFrame > 160) {
         m.lastFrame = now;
         m.frame = (m.frame + 1) % 4;
 
-        const key = this.monsterTexture(
-          m.type, m.frame
+        s.setTexture(
+          this.monsterTexture(m.type, m.frame)
         );
-
-        s.setTexture(key);
 
         const height = m.type === "boar" ? 90 : 76;
         s.setScale(height / s.height);
       }
 
       s.setDepth(s.y);
-      m.shadow.setPosition(s.x, s.y)
+
+      m.shadow
+        .setPosition(s.x, s.y)
         .setDepth(s.y - 1);
 
       m.bar.clear();
 
       if (dist < 430) {
-        const by = s.y - s.displayHeight - 13;
+        const by =
+          s.y - s.displayHeight - 13;
 
         m.bar.fillStyle(0x172920);
         m.bar.fillRect(s.x - 27, by, 54, 8);
@@ -934,19 +1026,33 @@ class QuarterRPG extends P.Scene {
 
       if (
         dist < 53 &&
-        now - m.lastHit > 1600
+        now >= m.knockUntil &&
+        now - m.lastHit > 1700 &&
+        now - this.lastDamage > 450
       ) {
         m.lastHit = now;
+        this.lastDamage = now;
+
         this.hp = Math.max(
           0, this.hp -
           (m.type === "boar" ? 6 : 3)
         );
+
+        this.hero.setTintFill(0xff7777);
+
+        this.time.delayedCall(120, () => {
+          if (this.hero.active) {
+            this.hero.clearTint();
+          }
+        });
       }
     }
 
+    // Hold attack to chain the three strikes.
     if (
       (this.attackHeld || this.keys.SPACE.isDown) &&
-      now - this.lastAttack >= 550
+      !this.attacking &&
+      now - this.lastAttack >= 290
     ) {
       this.attack(now);
     }
@@ -956,6 +1062,7 @@ class QuarterRPG extends P.Scene {
       if (now < d.ready) continue;
 
       const s = d.sprite;
+
       const distance = P.Math.Distance.Between(
         this.hero.x, this.hero.y,
         s.x, s.y
@@ -963,6 +1070,7 @@ class QuarterRPG extends P.Scene {
 
       if (distance < 145) {
         const t = Math.min(1, dt * 7);
+
         s.x += (this.hero.x - s.x) * t;
         s.y += (this.hero.y - 20 - s.y) * t;
       }
@@ -991,6 +1099,17 @@ class QuarterRPG extends P.Scene {
       this.cameras.main.flash(
         180, 255, 50, 50
       );
+    }
+
+    if (now > this.comboUntil && !this.attacking) {
+      this.combo = 0;
+    }
+
+    if (
+      now > this.lastAttack + 850 &&
+      !this.attacking
+    ) {
+      this.comboText.setAlpha(0);
     }
 
     this.updateHUD(now);
