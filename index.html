@@ -1,1 +1,90 @@
-<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"><meta name="theme-color" content="#14283b"><title>Quarter RPG V0.1</title><style>*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#14283b;touch-action:none;font-family:system-ui}#game{width:100%;height:100%}canvas{display:block}#loading{position:fixed;inset:0;display:grid;place-items:center;color:#fff;background:#14283b}</style></head><body><div id="game"></div><div id="loading">กำลังโหลด Quarter RPG...</div><script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script><script type="module" src="./src/main.js?v1.5"></script></body></html>
+
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1,
+    maximum-scale=1, user-scalable=no,
+    viewport-fit=cover">
+
+  <title>Quarter RPG V1.5</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #14283b;
+      touch-action: none;
+      font-family: system-ui, sans-serif;
+    }
+
+    #game {
+      width: 100%;
+      height: 100%;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #loading {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: grid;
+      place-items: center;
+      color: white;
+      background: #14283b;
+      text-align: center;
+      padding: 20px;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="game"></div>
+  <div id="loading">กำลังโหลด Quarter RPG...</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
+
+  <script>
+    window.addEventListener("error", function(e) {
+      const loading = document.getElementById("loading");
+      if (loading) {
+        loading.textContent =
+          "GAME ERROR: " + e.message;
+      }
+    });
+  </script>
+
+  <script type="module" src="./src/main.js?v=1.5.1"></script>
+
+  <script>
+    const checkGame = setInterval(() => {
+      const canvas = document.querySelector("#game canvas");
+
+      if (canvas) {
+        document.getElementById("loading")?.remove();
+        clearInterval(checkGame);
+      }
+    }, 200);
+
+    setTimeout(() => {
+      clearInterval(checkGame);
+
+      const loading = document.getElementById("loading");
+      if (loading) {
+        loading.textContent =
+          "โหลดเกมไม่สำเร็จ กรุณาส่งภาพหน้าจอนี้";
+      }
+    }, 15000);
+  </script>
+</body>
+</html>
