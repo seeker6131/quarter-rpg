@@ -1,130 +1,119 @@
 
 /*
- QUARTER RPG V1.5
- Phaser 3 | Mobile | GitHub Pages
- Full replacement for src/main.js
+ QUARTER RPG V1.6
+ Graphics Upgrade + Landscape Mobile
+ Phaser 3 | Full src/main.js
 */
 
-const P = window.Phaser;
-if (!P) throw Error("Load Phaser 3 first");
+const Phaser3 = window.Phaser;
+if (!Phaser3) throw new Error("Phaser 3 not loaded");
 
-const WORLD = { w: 2000, h: 1500 };
-const HOME = { x: 1000, y: 750, r: 300 };
-const SAVE = "quarter-rpg-v15";
-const DIRS = ["down", "up", "left", "right"];
-const ACTIONS = ["idle", "walk", "attack"];
+const WORLD_W = 2000;
+const WORLD_H = 1500;
+const SAVE_KEY = "quarter-rpg-v15";
+const VILLAGE = { x: 1000, y: 750, r: 310 };
 
-const HELL = {
-  idle: 8,
-  walk: 8,
-  run: 8,
-  attack_1: 8,
-  attack_2: 8,
-  hurt: 4,
-  die: 8
-};
-
-class Game extends P.Scene {
+class QuarterRPG extends Phaser3.Scene {
   constructor() {
-    super("Game");
+    super("QuarterRPG");
   }
 
   preload() {
-    for (const a of ACTIONS) {
-      for (const d of DIRS) {
-        const k = `hero_${a}_${d}`;
-        this.load.spritesheet(
-          k, `assets/${k}.png`,
-          { frameWidth: 256, frameHeight: 288 }
-        );
+    for (const action of ["idle", "walk", "attack"]) {
+      for (const dir of ["down", "up", "left", "right"]) {
+        const key = `hero_${action}_${dir}`;
+        this.load.spritesheet(key, `assets/${key}.png`, {
+          frameWidth: 256,
+          frameHeight: 288
+        });
       }
     }
 
-    for (const a in HELL) {
+    for (const [name, count] of Object.entries({
+      idle: 8, walk: 8, run: 8,
+      attack_1: 8, attack_2: 8,
+      hurt: 4, die: 8
+    })) {
       this.load.spritesheet(
-        `hellhound_${a}`,
-        `assets/hellhound_${a}.png`,
+        `hellhound_${name}`,
+        `assets/hellhound_${name}.png`,
         { frameWidth: 176, frameHeight: 146 }
       );
     }
 
-    for (const t of ["slime", "boar"]) {
+    for (const type of ["slime", "boar"]) {
       for (let i = 0; i < 4; i++) {
         this.load.image(
-          `${t}_${i}`,
-          `assets/${t}_${i}.png`
+          `${type}_${i}`,
+          `assets/${type}_${i}.png`
         );
       }
     }
 
-    for (const t of [
-      "grass", "water", "tree",
-      "bush", "rock", "flower", "stump"
+    for (const key of [
+      "grass", "water", "tree", "bush",
+      "rock", "flower", "stump"
     ]) {
-      this.load.image(t, `assets/${t}.png`);
+      this.load.image(key, `assets/${key}.png`);
     }
 
-    this.load.on("loaderror", f => {
-      console.warn("Missing:", f.key);
+    this.load.on("loaderror", file => {
+      console.warn("Asset missing:", file.key);
     });
   }
 
   create() {
     this.physics.world.setBounds(
-      0, 0, WORLD.w, WORLD.h
+      0, 0, WORLD_W, WORLD_H
     );
 
-    this.makeTextures();
+    this.makeGraphics();
     this.makeAnimations();
-    this.loadSave();
+    this.readSave();
 
     this.enemies = [];
     this.drops = [];
-    this.blocks = [];
+    this.obstacles = [];
     this.npcs = [];
     this.boss = null;
-
     this.walls = this.physics.add.staticGroup();
 
-    this.buildMap();
-    this.buildVillage();
+    this.drawWorld();
+    this.drawVillage();
 
-    const heroKey = this.textures.exists(
-      "hero_idle_down"
-    ) ? "hero_idle_down" : "fallback_hero";
+    const heroKey = this.textures.exists("hero_idle_down")
+      ? "hero_idle_down" : "fallback_hero";
 
     this.hero = this.physics.add.sprite(
-      HOME.x, HOME.y + 95, heroKey
+      1000, 850, heroKey
     ).setOrigin(0.5, 1);
 
-    this.hero.setDisplaySize(96, 108);
+    this.hero.setDisplaySize(78, 88);
     this.hero.setCollideWorldBounds(true);
     this.hero.body.setSize(
-      this.hero.width * 0.36,
+      this.hero.width * 0.35,
       this.hero.height * 0.12
     );
     this.hero.body.setOffset(
-      this.hero.width * 0.32,
+      this.hero.width * 0.325,
       this.hero.height * 0.85
     );
 
-    this.physics.add.collider(
-      this.hero, this.walls
-    );
+    this.physics.add.collider(this.hero, this.walls);
 
     this.shadow = this.add.ellipse(
       this.hero.x, this.hero.y,
-      48, 13, 0x102a20, 0.4
+      45, 12, 0x10251a, 0.4
     );
 
-    this.dir = "down";
-    this.heroAction = "";
-    this.combo = 0;
-    this.comboExpire = 0;
+    this.direction = "down";
+    this.currentAnimation = "";
     this.attacking = false;
-    this.attackAt = 0;
+    this.combo = 0;
+    this.comboUntil = 0;
+    this.attackTime = 0;
     this.attackEnd = 0;
-    this.hitDone = false;
+    this.attackHit = false;
     this.lastAttack = -9999;
     this.lastSkill = -9999;
     this.lastHurt = -9999;
@@ -132,190 +121,259 @@ class Game extends P.Scene {
     this.lastSave = 0;
 
     this.stick = { x: 0, y: 0 };
-    this.joyPointer = null;
+    this.stickPointer = null;
     this.attackPointer = null;
     this.attackHeld = false;
-    this.panelMode = "";
+    this.panelMode = null;
 
     this.cameras.main
-      .setBounds(0, 0, WORLD.w, WORLD.h)
+      .setBounds(0, 0, WORLD_W, WORLD_H)
       .startFollow(this.hero, true, 0.12, 0.12)
       .setRoundPixels(true);
 
-    this.makeUI();
-    this.bindInput();
-    this.layout();
+    this.createUI();
+    this.createInput();
+    this.resizeUI();
 
-    this.scale.on("resize", this.layout, this);
+    this.scale.on("resize", this.resizeUI, this);
 
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < 12; i++) {
       this.spawnEnemy();
     }
 
-    this.playHero("idle", "down");
-    this.notice("GREENHAVEN - คุยกับ ELDER เพื่อรับเควสต์");
+    this.animateHero("idle", "down");
+    this.message("GREENHAVEN — หมู่บ้านเริ่มต้น");
   }
 
-  loadSave() {
-    let s = {};
-
-    try {
-      s = JSON.parse(
-        localStorage.getItem(SAVE) || "{}"
-      );
-    } catch {}
-
-    this.level = s.level || 1;
-    this.exp = s.exp || 0;
-    this.gold = s.gold ?? 100;
-    this.gems = s.gems || 0;
-    this.kills = s.kills || 0;
-    this.sword = s.sword || 0;
-    this.armor = s.armor || 0;
-    this.potions = s.potions ?? 3;
-    this.quest = s.quest || {
-      accepted: false,
-      kills: 0,
-      claimed: false
-    };
-    this.bossWins = s.bossWins || 0;
-    this.maxHp = 100 + this.armor * 25;
-    this.hp = this.maxHp;
+  texture(key) {
+    return this.textures.exists(key)
+      ? key : `fallback_${key}`;
   }
 
-  saveGame() {
-    try {
-      localStorage.setItem(
-        SAVE,
-        JSON.stringify({
-          level: this.level,
-          exp: this.exp,
-          gold: this.gold,
-          gems: this.gems,
-          kills: this.kills,
-          sword: this.sword,
-          armor: this.armor,
-          potions: this.potions,
-          quest: this.quest,
-          bossWins: this.bossWins
-        })
-      );
-    } catch (e) {
-      console.warn("Save unavailable", e);
-    }
-  }
-
-  makeTextures() {
+  makeGraphics() {
     const g = this.make.graphics({ x: 0, y: 0 });
+
+    const rect = (color, x, y, w, h) => {
+      g.fillStyle(color);
+      g.fillRect(x, y, w, h);
+    };
+
+    const ellipse = (color, x, y, w, h) => {
+      g.fillStyle(color);
+      g.fillEllipse(x, y, w, h);
+    };
 
     const save = (key, w, h) => {
       g.generateTexture(key, w, h);
       g.clear();
     };
 
-    g.fillStyle(0xffffff);
-    g.fillRect(0, 0, 2, 2);
-    save("blank", 2, 2);
+    // Invisible collision texture
+    rect(0xffffff, 0, 0, 2, 2);
+    save("collision_pixel", 2, 2);
 
-    for (const [name, color] of [
-      ["grass", 0x478b52],
-      ["water", 0x2889b4],
-      ["tree", 0x337d45],
-      ["bush", 0x55a35a],
-      ["rock", 0x858e92],
-      ["flower", 0xf4c95c],
-      ["stump", 0x80512f]
-    ]) {
-      g.fillStyle(color);
-      g.fillRect(0, 0, 64, 64);
-      save(`fallback_${name}`, 64, 64);
+    // Detailed grass
+    rect(0x407a48, 0, 0, 64, 64);
+
+    for (let i = 0; i < 48; i++) {
+      const x = (i * 29 + 7) % 64;
+      const y = (i * 37 + 13) % 64;
+
+      rect(
+        i % 3 ? 0x519457 : 0x32683b,
+        x, y, 3 + i % 3, 2
+      );
     }
 
+    save("fallback_grass", 64, 64);
+
+    // Water
+    rect(0x226b95, 0, 0, 64, 64);
+
+    for (let y = 9; y < 64; y += 18) {
+      rect(0x399cbd, 8, y, 28, 3);
+      rect(0x69c5d8, 39, y + 5, 15, 2);
+    }
+
+    save("fallback_water", 64, 64);
+
+    // Tree
+    rect(0x342a23, 28, 42, 15, 34);
+    rect(0x855430, 33, 45, 5, 28);
+    ellipse(0x173e2c, 34, 35, 64, 63);
+    ellipse(0x276e3d, 30, 29, 58, 55);
+    ellipse(0x429a54, 20, 20, 35, 32);
+    ellipse(0x6ab96a, 44, 25, 25, 25);
+    rect(0xa5d987, 20, 13, 8, 4);
+    save("fallback_tree", 64, 80);
+
+    // Bush
+    ellipse(0x173e30, 32, 49, 60, 33);
+    ellipse(0x267642, 22, 36, 37, 40);
+    ellipse(0x419b52, 44, 35, 37, 37);
+    ellipse(0x75bf68, 29, 25, 29, 20);
+    save("fallback_bush", 64, 80);
+
+    // Rock
+    ellipse(0x33484b, 32, 47, 59, 35);
+    ellipse(0x798c8d, 31, 35, 57, 40);
+    ellipse(0xa9b6ae, 24, 28, 35, 20);
+    rect(0xd0d0bd, 16, 21, 14, 5);
+    save("fallback_rock", 64, 80);
+
+    // Flower
+    rect(0x236c37, 30, 30, 5, 29);
+    for (const [x, y] of [
+      [26, 24], [37, 24], [31, 18], [31, 32]
+    ]) {
+      ellipse(0xffd675, x, y, 15, 15);
+    }
+    ellipse(0xf08852, 31, 25, 10, 10);
+    save("fallback_flower", 64, 80);
+
+    // Stump
+    ellipse(0x3b3027, 32, 48, 50, 32);
+    rect(0x6d472d, 11, 25, 43, 31);
+    ellipse(0xc39359, 32, 27, 49, 20);
+    ellipse(0x7a5237, 32, 27, 29, 12);
+    save("fallback_stump", 64, 80);
+
+    // Monster fallbacks
     for (const [type, color] of [
-      ["slime", 0x4ed36d],
-      ["boar", 0x986444]
+      ["slime", 0x50cf70],
+      ["boar", 0x996343]
     ]) {
       for (let i = 0; i < 4; i++) {
-        g.fillStyle(color);
-        g.fillEllipse(32, 35 + i % 2, 54, 40);
-        g.fillStyle(0x202020);
-        g.fillRect(21, 28, 5, 6);
-        g.fillRect(40, 28, 5, 6);
+        ellipse(0x24372a, 32, 47, 59, 34);
+        ellipse(color, 32, 35 + i % 2, 55, 37);
+        rect(0x161c1a, 22, 29, 5, 6);
+        rect(0x161c1a, 41, 29, 5, 6);
         save(`fallback_${type}_${i}`, 64, 64);
       }
     }
 
-    g.fillStyle(0x28252d);
-    g.fillEllipse(82, 96, 105, 62);
-    g.fillEllipse(125, 70, 65, 57);
-    g.fillStyle(0xff7528);
-    g.fillRect(126, 63, 10, 7);
-    g.fillRect(45, 119, 16, 9);
-    g.fillRect(112, 119, 16, 9);
-    save("fallback_hell", 176, 146);
+    // Hellhound fallback
+    ellipse(0x26252b, 85, 98, 106, 60);
+    ellipse(0x26252b, 125, 73, 64, 54);
+    rect(0xff7426, 127, 64, 10, 7);
+    rect(0xff7426, 45, 121, 16, 8);
+    rect(0xff7426, 112, 121, 16, 8);
+    save("fallback_hellhound", 176, 146);
 
-    g.fillStyle(0x283a56);
-    g.fillRect(22, 39, 36, 52);
-    g.fillStyle(0xf0bb91);
-    g.fillRect(26, 15, 28, 28);
-    g.fillStyle(0x342522);
-    g.fillRect(23, 8, 34, 13);
-    g.fillStyle(0x283047);
-    g.fillRect(25, 90, 12, 24);
-    g.fillRect(43, 90, 12, 24);
-    g.fillStyle(0xffdf80);
-    g.fillRect(63, 35, 5, 70);
+    // Hero fallback
+    rect(0x202b44, 23, 37, 30, 53);
+    rect(0xf3c69a, 26, 13, 24, 28);
+    rect(0x39251f, 23, 8, 30, 12);
+    rect(0x243246, 26, 90, 10, 24);
+    rect(0x243246, 42, 90, 10, 24);
+    rect(0xf3e5a1, 58, 39, 5, 63);
     save("fallback_hero", 80, 120);
 
+    // NPC sprites
     for (let i = 0; i < 3; i++) {
-      g.fillStyle([
-        0x4b9a68, 0x956748, 0x5279b0
-      ][i]);
-      g.fillRect(16, 42, 36, 50);
-      g.fillStyle(0xf0c092);
-      g.fillRect(21, 17, 26, 28);
-      g.fillStyle(0x392c2a);
-      g.fillRect(18, 8, 32, 13);
-      g.fillStyle(0x26344b);
-      g.fillRect(19, 92, 12, 23);
-      g.fillRect(38, 92, 12, 23);
+      const coat = [
+        0x3b936a, 0x98704a, 0x526fa3
+      ][i];
+
+      const trim = [
+        0xd1e5b3, 0xffcb72, 0xbac8e9
+      ][i];
+
+      rect(0x211f29, 15, 38, 38, 59);
+      rect(coat, 19, 41, 30, 48);
+      rect(trim, 19, 59, 30, 5);
+      rect(0x1d2632, 19, 89, 12, 24);
+      rect(0x1d2632, 38, 89, 12, 24);
+      rect(0x382b27, 17, 107, 15, 7);
+      rect(0x382b27, 38, 107, 15, 7);
+      rect(0xe9b98d, 21, 19, 27, 24);
+      rect(0x322824, 18, 11, 32, 13);
+      rect(0x241d20, 26, 30, 3, 3);
+      rect(0x241d20, 40, 30, 3, 3);
+      rect(trim, 16, 43, 5, 24);
+      rect(trim, 48, 43, 5, 24);
+
+      if (i === 1) {
+        rect(0x4d4037, 16, 7, 36, 10);
+        rect(0xf4b34f, 20, 7, 28, 4);
+      }
+
       save(`npc_${i}`, 68, 120);
     }
 
+    // Detailed village houses
     for (let i = 0; i < 3; i++) {
-      g.fillStyle(0x3a2d29);
-      g.fillRect(10, 72, 210, 112);
-      g.fillStyle(0xd1b58b);
-      g.fillRect(15, 77, 200, 102);
+      const roof = [
+        0x9c453e, 0x446c9d, 0x74533d
+      ][i];
 
-      g.fillStyle([
-        0xa54c3a, 0x5276a4, 0x896642
-      ][i]);
+      const highlight = [
+        0xd57960, 0x729ac6, 0xac8061
+      ][i];
 
+      ellipse(0x244a36, 115, 183, 220, 27);
+      rect(0x473629, 19, 77, 192, 104);
+      rect(0xd6b889, 24, 81, 182, 95);
+
+      for (let y = 89; y < 176; y += 17) {
+        rect(0xbe9b73, 25, y, 180, 3);
+      }
+
+      rect(0x392e2b, 91, 126, 49, 55);
+      rect(0x76523a, 96, 132, 39, 49);
+      rect(0xe5bb75, 126, 151, 5, 6);
+
+      for (const x of [37, 160]) {
+        rect(0x3b342f, x - 4, 109, 41, 42);
+        rect(0x75a9b7, x, 113, 33, 33);
+        rect(0xd0d4b2, x + 15, 113, 3, 33);
+        rect(0xd0d4b2, x, 128, 33, 3);
+      }
+
+      g.fillStyle(0x332c2d);
       g.fillPoints([
-        { x: 0, y: 78 },
-        { x: 115, y: 5 },
-        { x: 230, y: 78 }
+        { x: 2, y: 82 },
+        { x: 115, y: 4 },
+        { x: 228, y: 82 }
       ], true);
 
-      g.fillStyle(0x52382a);
-      g.fillRect(96, 126, 39, 53);
-      g.fillStyle(0x46768c);
-      g.fillRect(39, 111, 35, 32);
-      g.fillRect(158, 111, 35, 32);
+      g.fillStyle(roof);
+      g.fillPoints([
+        { x: 9, y: 75 },
+        { x: 115, y: 10 },
+        { x: 221, y: 75 }
+      ], true);
 
+      for (let row = 0; row < 5; row++) {
+        const yy = 26 + row * 10;
+        const half = 18 + row * 19;
+
+        for (
+          let xx = 115 - half;
+          xx < 115 + half;
+          xx += 17
+        ) {
+          rect(
+            highlight,
+            xx + (row % 2) * 7,
+            yy, 12, 3
+          );
+        }
+      }
+
+      rect(0x46372e, 77, 85, 76, 21);
+      rect(0xe5b968, 82, 89, 66, 13);
       save(`house_${i}`, 230, 190);
     }
 
-    g.fillStyle(0xffd45c);
-    g.fillCircle(12, 12, 10);
+    ellipse(0xf7d35a, 12, 12, 20, 20);
     save("coin", 24, 24);
 
-    g.fillStyle(0x61d9ff);
+    g.fillStyle(0x5bd9ff);
     g.fillPoints([
-      { x: 12, y: 0 },
+      { x: 12, y: 1 },
       { x: 23, y: 12 },
-      { x: 12, y: 24 },
+      { x: 12, y: 23 },
       { x: 1, y: 12 }
     ], true);
     save("gem", 24, 24);
@@ -323,57 +381,57 @@ class Game extends P.Scene {
     g.destroy();
   }
 
-  tex(name) {
-    return this.textures.exists(name)
-      ? name
-      : `fallback_${name}`;
-  }
-
   makeAnimations() {
-    for (const a of ACTIONS) {
-      for (const d of DIRS) {
-        const k = `hero_${a}_${d}`;
-        if (!this.textures.exists(k)) continue;
+    for (const action of ["idle", "walk", "attack"]) {
+      for (const dir of ["down", "up", "left", "right"]) {
+        const key = `hero_${action}_${dir}`;
+        if (!this.textures.exists(key)) continue;
 
         this.anims.create({
-          key: `h_${a}_${d}`,
+          key: `heroAnim_${action}_${dir}`,
           frames: this.anims.generateFrameNumbers(
-            k, { start: 0, end: 7 }
+            key, { start: 0, end: 7 }
           ),
-          frameRate: a === "attack" ? 16 :
-            a === "walk" ? 11 : 5,
-          repeat: a === "attack" ? 0 : -1
+          frameRate: action === "attack" ? 16 :
+            action === "walk" ? 11 : 5,
+          repeat: action === "attack" ? 0 : -1
         });
       }
     }
 
-    for (const [a, n] of Object.entries(HELL)) {
-      const k = `hellhound_${a}`;
-      if (!this.textures.exists(k)) continue;
+    const hell = {
+      idle: 8, walk: 8, run: 8,
+      attack_1: 8, attack_2: 8,
+      hurt: 4, die: 8
+    };
+
+    for (const [action, count] of Object.entries(hell)) {
+      const key = `hellhound_${action}`;
+      if (!this.textures.exists(key)) continue;
 
       this.anims.create({
-        key: `e_${a}`,
+        key: `hellAnim_${action}`,
         frames: this.anims.generateFrameNumbers(
-          k, { start: 0, end: n - 1 }
+          key, { start: 0, end: count - 1 }
         ),
-        frameRate: a === "idle" ? 5 : 12,
-        repeat: ["idle", "walk", "run"].includes(a)
+        frameRate: action === "idle" ? 5 : 12,
+        repeat: ["idle", "walk", "run"].includes(action)
           ? -1 : 0
       });
     }
   }
 
-  playHero(a, d, force = false) {
-    const key = `h_${a}_${d}`;
+  animateHero(action, dir, force = false) {
+    const key = `heroAnim_${action}_${dir}`;
 
     if (
       !force &&
-      this.heroAction === key &&
+      this.currentAnimation === key &&
       this.hero.anims.isPlaying
     ) return;
 
-    this.heroAction = key;
-    this.dir = d;
+    this.currentAnimation = key;
+    this.direction = dir;
 
     if (this.anims.exists(key)) {
       this.hero.play(key, true);
@@ -382,74 +440,75 @@ class Game extends P.Scene {
     }
   }
 
-  playEnemy(m, a, force = false) {
-    const key = `e_${a}`;
+  animateEnemy(enemy, action, force = false) {
+    if (enemy.type !== "hellhound") return;
 
-    if (
-      m.type !== "hellhound" ||
-      !this.anims.exists(key)
-    ) return;
+    const key = `hellAnim_${action}`;
+    if (!this.anims.exists(key)) return;
 
     if (
       !force &&
-      m.anim === a &&
-      m.s.anims.isPlaying
+      enemy.animation === action &&
+      enemy.sprite.anims.isPlaying
     ) return;
 
-    m.anim = a;
-    m.s.play(key, true);
+    enemy.animation = action;
+    enemy.sprite.play(key, true);
   }
 
-  block(x, y, w, h) {
-    this.blocks.push({ x, y, w, h });
+  addWall(x, y, w, h) {
+    this.obstacles.push({ x, y, w, h });
 
-    const b = this.walls.create(x, y, "blank");
-    b.setDisplaySize(w, h);
-    b.refreshBody();
-    b.setVisible(false);
+    const wall = this.walls.create(
+      x, y, "collision_pixel"
+    );
+
+    wall.setDisplaySize(w, h);
+    wall.refreshBody();
+    wall.setVisible(false);
   }
 
-  walkable(x, y, r = 20) {
+  canWalk(x, y, r = 20) {
     if (
       x < r || y < r ||
-      x > WORLD.w - r ||
-      y > WORLD.h - r
+      x > WORLD_W - r ||
+      y > WORLD_H - r
     ) return false;
 
-    return !this.blocks.some(b =>
+    return !this.obstacles.some(b =>
       Math.abs(x - b.x) < b.w / 2 + r &&
       Math.abs(y - b.y) < b.h / 2 + r
     );
   }
 
-  safe(x, y, extra = 0) {
+  isSafe(x, y, extra = 0) {
     return Math.hypot(
-      x - HOME.x,
-      y - HOME.y
-    ) < HOME.r + extra;
+      x - VILLAGE.x,
+      y - VILLAGE.y
+    ) < VILLAGE.r + extra;
   }
 
-  buildMap() {
+  drawWorld() {
     this.add.tileSprite(
-      WORLD.w / 2,
-      WORLD.h / 2,
-      WORLD.w,
-      WORLD.h,
-      this.tex("grass")
+      WORLD_W / 2,
+      WORLD_H / 2,
+      WORLD_W,
+      WORLD_H,
+      this.texture("grass")
     ).setDepth(-10000);
 
     this.add.tileSprite(
       1640, 300, 300, 600,
-      this.tex("water")
+      this.texture("water")
     ).setDepth(-9998);
 
-    this.block(1640, 100, 300, 200);
-    this.block(1640, 480, 300, 240);
+    this.addWall(1640, 100, 300, 200);
+    this.addWall(1640, 480, 300, 240);
 
     const bridge = this.add.graphics()
       .setDepth(-9997);
 
-    bridge.fillStyle(0x775237);
+    bridge.fillStyle(0x705034);
     bridge.fillRect(1450, 200, 400, 120);
 
     for (let x = 1455; x < 1840; x += 28) {
@@ -459,48 +518,46 @@ class Game extends P.Scene {
 
     const placed = [];
 
-    for (let i = 0; i < 180; i++) {
+    for (let i = 0; i < 160; i++) {
       for (let attempt = 0; attempt < 20; attempt++) {
-        const x = P.Math.Between(75, WORLD.w - 75);
-        const y = P.Math.Between(70, WORLD.h - 70);
+        const x = Phaser3.Math.Between(
+          75, WORLD_W - 75
+        );
+        const y = Phaser3.Math.Between(
+          70, WORLD_H - 70
+        );
 
-        if (this.safe(x, y, 120)) continue;
-
-        if (
-          x > 1450 && x < 1850 &&
-          y < 610
-        ) continue;
-
-        if (!this.walkable(x, y, 60)) continue;
+        if (this.isSafe(x, y, 120)) continue;
+        if (x > 1450 && x < 1850 && y < 610) continue;
+        if (!this.canWalk(x, y, 60)) continue;
 
         if (placed.some(p =>
           Math.hypot(x - p.x, y - p.y) < 85
         )) continue;
 
         const r = Math.random();
-
         const type = r < 0.36 ? "tree" :
           r < 0.58 ? "bush" :
           r < 0.75 ? "rock" :
           r < 0.91 ? "flower" : "stump";
 
-        const img = this.add.image(
-          x, y, this.tex(type)
+        const image = this.add.image(
+          x, y, this.texture(type)
         ).setOrigin(0.5, 1);
 
-        const heights = {
+        const height = {
           tree: 150,
           bush: 65,
           rock: 58,
           flower: 28,
           stump: 48
-        };
+        }[type];
 
-        img.setScale(heights[type] / img.height);
-        img.setDepth(y);
+        image.setScale(height / image.height);
+        image.setDepth(y);
 
         if (["tree", "rock", "stump"].includes(type)) {
-          this.block(
+          this.addWall(
             x, y - 12,
             type === "tree" ? 40 : 34,
             25
@@ -513,103 +570,122 @@ class Game extends P.Scene {
     }
   }
 
-  buildVillage() {
+  drawVillage() {
     const g = this.add.graphics().setDepth(-100);
 
-    g.fillStyle(0x7aaf67);
-    g.fillEllipse(
-      HOME.x, HOME.y, 690, 600
-    );
+    g.fillStyle(0x4f8e52);
+    g.fillEllipse(1000, 750, 750, 620);
 
-    g.lineStyle(7, 0xd4b17d);
-    g.strokeEllipse(
-      HOME.x, HOME.y, 690, 600
-    );
+    g.lineStyle(5, 0x8baf71, 0.75);
+    g.strokeEllipse(1000, 750, 750, 620);
 
-    g.fillStyle(0xc9ac7f);
-    g.fillEllipse(
-      HOME.x, HOME.y + 35, 430, 230
-    );
-    g.fillRect(HOME.x - 35, HOME.y + 40, 70, 390);
+    // Cobblestone plaza
+    g.fillStyle(0xbba67e);
+    g.fillEllipse(1000, 792, 455, 265);
 
-    g.fillStyle(0x5e6d72);
-    g.fillEllipse(HOME.x, HOME.y - 20, 94, 48);
+    g.fillStyle(0x9f8c6d);
+    g.fillRect(966, 815, 68, 440);
 
-    g.fillStyle(0x4396ba);
-    g.fillEllipse(HOME.x, HOME.y - 22, 65, 27);
+    for (let i = 0; i < 110; i++) {
+      const x = 1000 + Math.sin(i * 19.3) * 205;
+      const y = 792 + Math.cos(i * 13.7) * 117;
+
+      if (
+        Math.hypot(
+          (x - 1000) / 215,
+          (y - 792) / 125
+        ) < 0.95
+      ) {
+        g.fillStyle(
+          i % 3 ? 0xcfc09a : 0x9f9173,
+          0.65
+        );
+
+        g.fillRoundedRect(
+          x, y, 11 + i % 3 * 5,
+          5 + i % 4, 2
+        );
+      }
+    }
+
+    // Fountain
+    g.fillStyle(0x394f57);
+    g.fillEllipse(1000, 738, 122, 74);
+
+    g.fillStyle(0x859a99);
+    g.fillEllipse(1000, 729, 120, 64);
+
+    g.fillStyle(0x286c92);
+    g.fillEllipse(1000, 727, 96, 43);
+
+    g.fillStyle(0x63c4d4);
+    g.fillEllipse(987, 721, 43, 10);
 
     const houses = [
-      [760, 610, 0, "SHOP"],
-      [1240, 610, 1, "FORGE"],
-      [1000, 470, 2, "HALL"]
+      [760, 610, 0, "MIRA SHOP"],
+      [1240, 610, 1, "BRON FORGE"],
+      [1000, 470, 2, "GUILD HALL"]
     ];
 
     for (const [x, y, id, name] of houses) {
       this.add.image(
         x, y, `house_${id}`
       ).setOrigin(0.5, 1)
-        .setScale(0.95)
-        .setDepth(y);
+        .setDepth(y)
+        .setScale(0.95);
 
-      this.block(x, y - 32, 160, 48);
+      this.addWall(x, y - 32, 160, 48);
 
-      this.add.text(x, y - 194, name, {
-        fontFamily: "monospace",
-        fontSize: "17px",
-        color: "#ffe6a1",
-        stroke: "#2a211b",
-        strokeThickness: 4
-      }).setOrigin(0.5).setDepth(y + 1);
+      this.add.text(
+        x, y - 169, name,
+        {
+          fontFamily: "monospace",
+          fontSize: "12px",
+          fontStyle: "bold",
+          color: "#ffe7b2",
+          backgroundColor: "#303c37",
+          padding: { x: 6, y: 3 }
+        }
+      ).setOrigin(0.5).setDepth(y + 1);
     }
 
     this.addNPC(0, 785, 775, "MIRA", "ร้านค้า");
     this.addNPC(1, 1215, 775, "BRON", "ช่างตีเหล็ก");
-    this.addNPC(2, 1000, 930, "ELDER", "เควสต์");
-
-    this.add.text(
-      HOME.x, HOME.y + 290,
-      "GREENHAVEN - SAFE ZONE",
-      {
-        fontFamily: "monospace",
-        fontSize: "21px",
-        color: "#fff2bb",
-        stroke: "#173a26",
-        strokeThickness: 5
-      }
-    ).setOrigin(0.5).setDepth(1100);
+    this.addNPC(2, 1000, 950, "ELDER", "เควสต์");
   }
 
   addNPC(id, x, y, name, role) {
+    const npc = { id, x, y, name, role };
+
     const sprite = this.add.image(
       x, y, `npc_${id}`
     ).setOrigin(0.5, 1)
-      .setDisplaySize(61, 108)
+      .setDisplaySize(52, 91)
       .setDepth(y)
       .setInteractive();
 
-    this.add.text(
-      x, y - 125,
+    const label = this.add.text(
+      x, y - 107,
       `${name}\n${role}`,
       {
         fontFamily: "system-ui",
-        fontSize: "15px",
+        fontSize: "12px",
         align: "center",
-        color: "#ffe9b1",
-        stroke: "#162b1d",
-        strokeThickness: 4
+        color: "#fff0bb",
+        backgroundColor: "#203b35",
+        padding: { x: 5, y: 3 }
       }
     ).setOrigin(0.5).setDepth(y + 1);
 
-    const npc = { id, x, y, name, role };
-    this.npcs.push(npc);
+    npc.sprite = sprite;
+    npc.label = label;
 
-    sprite.on("pointerdown", () => {
-      this.talk(npc);
-    });
+    sprite.on("pointerdown", () => this.talk(npc));
+    this.npcs.push(npc);
   }
 
   nearestNPC() {
-    let best = null;
+    let result = null;
     let distance = 145;
 
     for (const npc of this.npcs) {
@@ -619,12 +695,12 @@ class Game extends P.Scene {
       );
 
       if (d < distance) {
-        best = npc;
         distance = d;
+        result = npc;
       }
     }
 
-    return best;
+    return result;
   }
 
   talk(npc) {
@@ -634,267 +710,327 @@ class Game extends P.Scene {
         this.hero.y - npc.y
       ) > 150
     ) {
-      this.notice("เดินเข้าใกล้ NPC ก่อน");
+      this.message("เดินเข้าใกล้ NPC ก่อน");
       return;
     }
 
-    if (npc.id === 0) this.openPanel("shop");
-    if (npc.id === 1) this.openPanel("forge");
-    if (npc.id === 2) this.openPanel("quest");
+    this.openPanel(
+      ["shop", "forge", "quest"][npc.id]
+    );
   }
 
-  makeUI() {
+  readSave() {
+    let s = {};
+
+    try {
+      s = JSON.parse(
+        localStorage.getItem(SAVE_KEY) || "{}"
+      );
+    } catch {}
+
+    this.level = s.level || 1;
+    this.exp = s.exp || 0;
+    this.gold = s.gold ?? 100;
+    this.gems = s.gems || 0;
+    this.kills = s.kills || 0;
+    this.sword = s.sword || 0;
+    this.armor = s.armor || 0;
+    this.potions = s.potions ?? 3;
+    this.bossWins = s.bossWins ?? s.bossDefeated ?? 0;
+
+    this.quest = s.quest || {
+      accepted: false,
+      kills: 0,
+      claimed: false
+    };
+
+    this.maxHp = 100 + this.armor * 25;
+    this.hp = this.maxHp;
+  }
+
+  saveGame() {
+    try {
+      localStorage.setItem(
+        SAVE_KEY,
+        JSON.stringify({
+          level: this.level,
+          exp: this.exp,
+          gold: this.gold,
+          gems: this.gems,
+          kills: this.kills,
+          sword: this.sword,
+          armor: this.armor,
+          potions: this.potions,
+          bossWins: this.bossWins,
+          quest: this.quest
+        })
+      );
+    } catch (e) {
+      console.warn("Save failed", e);
+    }
+  }
+
+  createUI() {
     const fixed = obj =>
       obj.setScrollFactor(0).setDepth(20000);
 
     this.hud = fixed(this.add.graphics());
 
     this.hudText = fixed(this.add.text(
-      15, 14, "",
+      14, 10, "",
       {
         fontFamily: "system-ui",
-        fontSize: "14px",
+        fontSize: "12px",
         color: "#ffffff",
         fontStyle: "bold"
       }
     ));
 
     this.noticeText = fixed(this.add.text(
-      0, 150, "",
+      0, 0, "",
       {
         fontFamily: "system-ui",
-        fontSize: "16px",
+        fontSize: "14px",
         color: "#ffffff",
         backgroundColor: "#182d3ee8",
-        padding: { x: 12, y: 8 },
-        align: "center"
+        padding: { x: 12, y: 7 }
       }
-    ).setOrigin(0.5)).setVisible(false);
+    ).setOrigin(0.5).setVisible(false));
 
     this.joyBase = fixed(this.add.circle(
-      90, 0, 61, 0x163349, 0.72
-    ).setStrokeStyle(3, 0xb6d9ec));
+      0, 0, 52, 0x152f40, 0.7
+    ).setStrokeStyle(3, 0xa6cddd));
 
     this.joyKnob = fixed(this.add.circle(
-      90, 0, 26, 0xa8d8f1
+      0, 0, 23, 0xa4d8f1
     ));
 
-    this.attackBtn = fixed(this.add.circle(
-      0, 0, 48, 0xa83d2d
-    ).setStrokeStyle(4, 0xffc569));
+    this.attackButton = fixed(this.add.circle(
+      0, 0, 40, 0x9d352e
+    ).setStrokeStyle(3, 0xffc46a));
 
     this.attackLabel = fixed(this.add.text(
       0, 0, "⚔",
-      { fontSize: "32px" }
+      { fontSize: "29px" }
     ).setOrigin(0.5));
 
-    this.skillBtn = fixed(this.add.circle(
-      0, 0, 35, 0x30518b
-    ).setStrokeStyle(3, 0xe3d36e));
+    this.skillButton = fixed(this.add.circle(
+      0, 0, 32, 0x315b96
+    ).setStrokeStyle(3, 0xe6cb72));
 
     this.skillLabel = fixed(this.add.text(
       0, 0, "✦",
-      {
-        fontSize: "28px",
-        color: "#ffffff"
-      }
+      { fontSize: "26px", color: "#ffffff" }
     ).setOrigin(0.5));
 
-    this.talkBtn = fixed(this.add.text(
-      0, 0, "💬 คุย",
+    this.talkButton = fixed(this.add.text(
+      0, 0, "คุย",
       {
-        fontSize: "16px",
+        fontSize: "14px",
         color: "#ffffff",
         backgroundColor: "#346e50",
-        padding: { x: 12, y: 10 }
+        padding: { x: 12, y: 7 }
       }
     ).setOrigin(0.5).setInteractive());
 
-    this.talkBtn.on("pointerdown", () => {
+    this.talkButton.on("pointerdown", () => {
       if (this.panelMode) return;
-
       const npc = this.nearestNPC();
+
       if (npc) this.talk(npc);
-      else this.notice("ไม่มี NPC อยู่ใกล้");
+      else this.message("ไม่มี NPC อยู่ใกล้");
     });
 
-    this.bagBtn = fixed(this.add.text(
-      0, 0, "🎒 BAG",
+    this.bagButton = fixed(this.add.text(
+      0, 0, "BAG",
       {
-        fontSize: "15px",
+        fontSize: "13px",
         color: "#ffffff",
-        backgroundColor: "#394f72",
-        padding: { x: 10, y: 8 }
+        backgroundColor: "#384f72",
+        padding: { x: 10, y: 7 }
       }
     ).setOrigin(0.5).setInteractive());
 
-    this.bagBtn.on("pointerdown", () => {
+    this.bagButton.on("pointerdown", () => {
       this.openPanel("bag");
     });
 
-    this.potionBtn = fixed(this.add.text(
-      0, 0, "🧪",
+    this.potionButton = fixed(this.add.text(
+      0, 0, "POTION",
       {
-        fontSize: "16px",
+        fontSize: "12px",
         color: "#ffffff",
-        backgroundColor: "#794577",
-        padding: { x: 12, y: 8 }
+        backgroundColor: "#754576",
+        padding: { x: 9, y: 7 }
       }
     ).setOrigin(0.5).setInteractive());
 
-    this.potionBtn.on("pointerdown", () => {
+    this.potionButton.on("pointerdown", () => {
       if (!this.panelMode) this.usePotion();
     });
 
     this.bossBar = fixed(this.add.graphics());
 
     this.bossLabel = fixed(this.add.text(
-      0, 91, "HELLHOUND ALPHA",
+      0, 0, "HELLHOUND ALPHA",
       {
         fontFamily: "monospace",
-        fontSize: "18px",
-        fontStyle: "bold",
+        fontSize: "15px",
         color: "#ffbc74",
         stroke: "#24191b",
-        strokeThickness: 4
+        strokeThickness: 3
       }
-    ).setOrigin(0.5)).setVisible(false);
+    ).setOrigin(0.5).setVisible(false));
 
     this.panel = fixed(this.add.container(0, 0));
     this.panel.setVisible(false);
 
-    this.panelBg = this.add.graphics();
-    this.panel.add(this.panelBg);
+    this.panelBackground = this.add.graphics();
+    this.panel.add(this.panelBackground);
 
     this.panelTitle = this.add.text(
       0, 0, "",
       {
-        fontFamily: "system-ui",
-        fontSize: "24px",
+        fontSize: "21px",
         fontStyle: "bold",
         color: "#ffe09a"
       }
     ).setOrigin(0.5);
 
-    this.panel.add(this.panelTitle);
-
     this.panelInfo = this.add.text(
       0, 0, "",
       {
-        fontFamily: "system-ui",
-        fontSize: "15px",
+        fontSize: "14px",
         color: "#ffffff",
         align: "center",
-        wordWrap: { width: 285 }
+        wordWrap: { width: 280 }
       }
     ).setOrigin(0.5);
 
-    this.panel.add(this.panelInfo);
+    this.panel.add([
+      this.panelTitle,
+      this.panelInfo
+    ]);
 
-    this.options = [];
+    this.optionButtons = [];
 
     for (let i = 0; i < 4; i++) {
-      const btn = this.add.text(
+      const button = this.add.text(
         0, 0, "",
         {
-          fontFamily: "system-ui",
-          fontSize: "15px",
+          fontSize: "13px",
           color: "#ffffff",
           backgroundColor: "#345f50",
-          padding: { x: 12, y: 10 },
-          align: "center"
+          padding: { x: 10, y: 8 }
         }
       ).setOrigin(0.5).setInteractive();
 
-      btn.on("pointerdown", () => {
+      button.on("pointerdown", () => {
         this.panelAction(i);
       });
 
-      this.options.push(btn);
-      this.panel.add(btn);
+      this.optionButtons.push(button);
+      this.panel.add(button);
     }
 
-    this.closeBtn = this.add.text(
+    this.closeButton = this.add.text(
       0, 0, "✕ ปิด",
       {
-        fontSize: "17px",
+        fontSize: "14px",
         color: "#ffffff",
         backgroundColor: "#98484b",
-        padding: { x: 18, y: 10 }
+        padding: { x: 12, y: 8 }
       }
     ).setOrigin(0.5).setInteractive();
 
-    this.closeBtn.on("pointerdown", () => {
+    this.closeButton.on("pointerdown", () => {
       this.closePanel();
     });
 
-    this.panel.add(this.closeBtn);
+    this.panel.add(this.closeButton);
   }
 
-  layout() {
+  resizeUI() {
     const w = this.scale.width;
     const h = this.scale.height;
+    const landscape = w > h;
 
-    const jx = w < 450 ? 85 : 105;
-    const ax = w - (w < 450 ? 80 : 105);
-    const by = h - 105;
+    const joyX = landscape ? 90 : 78;
+    const joyY = h - (landscape ? 77 : 100);
+    const attackX = w - (landscape ? 90 : 78);
+    const attackY = joyY;
 
-    this.joyBase.setPosition(jx, by);
-    this.joyKnob.setPosition(jx, by);
-    this.attackBtn.setPosition(ax, by);
-    this.attackLabel.setPosition(ax, by);
+    this.joyBase.setPosition(joyX, joyY);
+    this.joyKnob.setPosition(joyX, joyY);
 
-    this.skillBtn.setPosition(ax - 28, by - 103);
-    this.skillLabel.setPosition(ax - 28, by - 103);
+    this.attackButton.setPosition(attackX, attackY);
+    this.attackLabel.setPosition(attackX, attackY);
 
-    this.talkBtn.setPosition(w / 2, h - 75);
-    this.bagBtn.setPosition(w - 68, 150);
-    this.potionBtn.setPosition(ax, by - 185);
+    this.skillButton.setPosition(
+      attackX - 91, attackY - 20
+    );
+    this.skillLabel.setPosition(
+      attackX - 91, attackY - 20
+    );
 
-    this.noticeText.setPosition(w / 2, 175);
-    this.bossLabel.setPosition(w / 2, 91);
+    this.talkButton.setPosition(
+      w / 2, h - 34
+    );
 
-    const pw = Math.min(w - 24, 380);
-    const ph = Math.min(h - 24, 470);
+    this.bagButton.setPosition(
+      w - 45, 32
+    );
+
+    this.potionButton.setPosition(
+      w - 46, 77
+    );
+
+    this.noticeText.setPosition(
+      w / 2, landscape ? 38 : 150
+    );
+
+    this.bossLabel.setPosition(
+      w / 2, landscape ? 56 : 91
+    );
+
+    const pw = Math.min(w - 20, 360);
+    const ph = Math.min(h - 16, 390);
     const cx = w / 2;
     const cy = h / 2;
 
-    this.panelBg.clear();
-    this.panelBg.fillStyle(0x111e2e, 0.97);
-    this.panelBg.fillRoundedRect(
-      cx - pw / 2,
-      cy - ph / 2,
+    this.panelBackground.clear();
+    this.panelBackground.fillStyle(0x111e2e, 0.97);
+    this.panelBackground.fillRoundedRect(
+      cx - pw / 2, cy - ph / 2,
       pw, ph, 12
     );
 
-    this.panelBg.lineStyle(3, 0xe1b96d);
-    this.panelBg.strokeRoundedRect(
-      cx - pw / 2,
-      cy - ph / 2,
+    this.panelBackground.lineStyle(3, 0xe1b96d);
+    this.panelBackground.strokeRoundedRect(
+      cx - pw / 2, cy - ph / 2,
       pw, ph, 12
     );
 
     this.panelTitle.setPosition(
-      cx, cy - ph / 2 + 36
+      cx, cy - ph / 2 + 28
     );
 
     this.panelInfo.setPosition(
-      cx, cy - ph / 2 + 100
+      cx, cy - ph / 2 + 82
     );
 
-    this.options.forEach((b, i) => {
+    this.optionButtons.forEach((b, i) => {
       b.setPosition(
-        cx,
-        cy - 48 + i * 58
+        cx, cy - 30 + i * 42
       );
     });
 
-    this.closeBtn.setPosition(
-      cx, cy + ph / 2 - 34
+    this.closeButton.setPosition(
+      cx, cy + ph / 2 - 25
     );
   }
 
-  bindInput() {
+  createInput() {
     this.keys = this.input.keyboard.addKeys(
       "W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,E,Q,I,F"
     );
@@ -908,20 +1044,20 @@ class Game extends P.Scene {
       const h = this.scale.height;
 
       if (
-        p.x < w * 0.47 &&
+        p.x < w * 0.4 &&
         p.y > h * 0.45 &&
-        this.joyPointer === null
+        this.stickPointer === null
       ) {
-        this.joyPointer = p.id;
+        this.stickPointer = p.id;
         this.moveStick(p);
         return;
       }
 
       if (
         Math.hypot(
-          p.x - this.skillBtn.x,
-          p.y - this.skillBtn.y
-        ) < 44
+          p.x - this.skillButton.x,
+          p.y - this.skillButton.y
+        ) < 43
       ) {
         this.skill();
         return;
@@ -929,9 +1065,9 @@ class Game extends P.Scene {
 
       if (
         Math.hypot(
-          p.x - this.attackBtn.x,
-          p.y - this.attackBtn.y
-        ) < 65
+          p.x - this.attackButton.x,
+          p.y - this.attackButton.y
+        ) < 54
       ) {
         this.attackPointer = p.id;
         this.attackHeld = true;
@@ -940,15 +1076,16 @@ class Game extends P.Scene {
     });
 
     this.input.on("pointermove", p => {
-      if (p.id === this.joyPointer) {
+      if (p.id === this.stickPointer) {
         this.moveStick(p);
       }
     });
 
     const release = p => {
-      if (p.id === this.joyPointer) {
-        this.joyPointer = null;
+      if (p.id === this.stickPointer) {
+        this.stickPointer = null;
         this.stick = { x: 0, y: 0 };
+
         this.joyKnob.setPosition(
           this.joyBase.x, this.joyBase.y
         );
@@ -964,9 +1101,8 @@ class Game extends P.Scene {
     this.input.on("pointerupoutside", release);
 
     this.keys.E.on("down", () => {
-      if (this.panelMode) return;
       const npc = this.nearestNPC();
-      if (npc) this.talk(npc);
+      if (npc && !this.panelMode) this.talk(npc);
     });
 
     this.keys.Q.on("down", () => {
@@ -986,17 +1122,17 @@ class Game extends P.Scene {
   moveStick(p) {
     const dx = p.x - this.joyBase.x;
     const dy = p.y - this.joyBase.y;
-    const len = Math.hypot(dx, dy);
-    const power = Math.min(1, len / 55);
+    const length = Math.hypot(dx, dy);
+    const power = Math.min(1, length / 50);
 
-    this.stick = len ? {
-      x: dx / len * power,
-      y: dy / len * power
+    this.stick = length ? {
+      x: dx / length * power,
+      y: dy / length * power
     } : { x: 0, y: 0 };
 
     this.joyKnob.setPosition(
-      this.joyBase.x + this.stick.x * 43,
-      this.joyBase.y + this.stick.y * 43
+      this.joyBase.x + this.stick.x * 36,
+      this.joyBase.y + this.stick.y * 36
     );
   }
 
@@ -1004,69 +1140,69 @@ class Game extends P.Scene {
     this.panelMode = mode;
     this.attackHeld = false;
     this.stick = { x: 0, y: 0 };
-    this.joyPointer = null;
+    this.stickPointer = null;
+    this.hero.setVelocity(0);
 
     this.joyKnob.setPosition(
       this.joyBase.x, this.joyBase.y
     );
 
-    this.hero.setVelocity(0, 0);
     this.panel.setVisible(true);
     this.refreshPanel();
   }
 
   closePanel() {
-    this.panelMode = "";
+    this.panelMode = null;
     this.panel.setVisible(false);
-    this.attackHeld = false;
   }
 
   refreshPanel() {
     const mode = this.panelMode;
     let title = "";
     let info = "";
-    let buttons = [];
+    let options = [];
 
     if (mode === "shop") {
       title = "MIRA'S SHOP";
       info = `Gold: ${this.gold}`;
 
-      buttons = [
-        "🧪 ยาฟื้น HP +50 - 20 Gold",
-        "🧪 ยา 3 ขวด - 50 Gold",
-        "❤️ ฟื้น HP เต็ม - 15 Gold"
+      options = [
+        "ซื้อยา HP +50 — 20 Gold",
+        "ซื้อยา 3 ขวด — 50 Gold",
+        "ฟื้น HP เต็ม — 15 Gold"
       ];
     }
 
     if (mode === "forge") {
       title = "BRON'S FORGE";
-      info = `Gold: ${this.gold}\n` +
+
+      info = `Gold ${this.gold}\n` +
         `Sword Lv.${this.sword} | Armor Lv.${this.armor}`;
 
-      buttons = [
-        `⚔ อัปเกรดดาบ - ${60 * (this.sword + 1)} Gold`,
-        `🛡 อัปเกรดเกราะ - ${50 * (this.armor + 1)} Gold`,
-        "🔧 ฟื้น HP เต็ม - 10 Gold"
+      options = [
+        `อัปดาบ — ${60 * (this.sword + 1)} Gold`,
+        `อัปเกราะ — ${50 * (this.armor + 1)} Gold`,
+        "ฟื้น HP — 10 Gold"
       ];
     }
 
     if (mode === "quest") {
-      title = "ELDER - QUEST";
+      title = "ELDER — QUEST";
 
       if (!this.quest.accepted) {
-        info = "ภารกิจ: กำจัด Hellhound 5 ตัว";
-        buttons = ["รับภารกิจ"];
+        info = "กำจัด Hellhound 5 ตัว";
+        options = ["รับเควสต์"];
       } else if (!this.quest.claimed) {
-        info = `กำจัด Hellhound ${Math.min(
-          this.quest.kills, 5
-        )}/5\nรางวัล: 300 Gold + 200 EXP`;
+        info =
+          `Hellhound ${Math.min(this.quest.kills, 5)}/5\n` +
+          "รางวัล 300 Gold + 200 EXP";
 
-        buttons = this.quest.kills >= 5
+        options = this.quest.kills >= 5
           ? ["รับรางวัล"]
-          : ["กำลังทำภารกิจ"];
+          : ["กำลังทำเควสต์"];
       } else {
-        info = "ทำภารกิจสำเร็จแล้ว!\nมีบอสอยู่ในป่า";
-        buttons = ["เรียก Hellhound Alpha"];
+        info = "เควสต์สำเร็จแล้ว";
+        options = ["เรียก Hellhound Alpha"];
       }
     }
 
@@ -1077,29 +1213,29 @@ class Game extends P.Scene {
         `LEVEL ${this.level}\n` +
         `HP ${this.hp}/${this.maxHp}\n` +
         `ATK ${18 + this.sword * 8}\n` +
-        `ARMOR Lv.${this.armor}\n` +
-        `SWORD Lv.${this.sword}\n` +
-        `GOLD ${this.gold} | GEMS ${this.gems}\n` +
-        `POTIONS ${this.potions}\n` +
-        `BOSS WINS ${this.bossWins}`;
+        `Sword Lv.${this.sword}\n` +
+        `Armor Lv.${this.armor}\n` +
+        `Gold ${this.gold} | Gems ${this.gems}\n` +
+        `Potions ${this.potions}\n` +
+        `Boss Wins ${this.bossWins}`;
 
-      buttons = ["🧪 ใช้ยาฟื้น HP"];
+      options = ["ใช้ยาฟื้น HP"];
     }
 
     this.panelTitle.setText(title);
     this.panelInfo.setText(info);
 
-    this.options.forEach((b, i) => {
-      b.setVisible(i < buttons.length);
-      b.setText(buttons[i] || "");
+    this.optionButtons.forEach((button, i) => {
+      button.setVisible(i < options.length);
+      button.setText(options[i] || "");
     });
   }
 
-  panelAction(i) {
+  panelAction(index) {
     const mode = this.panelMode;
 
     if (mode === "bag") {
-      if (i === 0) this.usePotion();
+      if (index === 0) this.usePotion();
       this.refreshPanel();
       return;
     }
@@ -1107,7 +1243,7 @@ class Game extends P.Scene {
     if (mode === "quest") {
       if (!this.quest.accepted) {
         this.quest.accepted = true;
-        this.notice("รับเควสต์แล้ว!");
+        this.message("รับเควสต์แล้ว");
       } else if (
         !this.quest.claimed &&
         this.quest.kills >= 5
@@ -1115,7 +1251,7 @@ class Game extends P.Scene {
         this.quest.claimed = true;
         this.gold += 300;
         this.gainExp(200);
-        this.notice("QUEST COMPLETE!");
+        this.message("QUEST COMPLETE!");
       } else if (this.quest.claimed) {
         this.spawnBoss();
         this.closePanel();
@@ -1127,75 +1263,77 @@ class Game extends P.Scene {
       return;
     }
 
-    let cost = 0;
+    let cost;
 
     if (mode === "shop") {
-      cost = [20, 50, 15][i];
+      cost = [20, 50, 15][index];
     } else if (mode === "forge") {
       cost = [
         60 * (this.sword + 1),
         50 * (this.armor + 1),
         10
-      ][i];
+      ][index];
     }
 
     if (cost === undefined) return;
 
     if (this.gold < cost) {
-      this.notice("Gold ไม่เพียงพอ");
+      this.message("Gold ไม่เพียงพอ");
       return;
     }
 
     if (
       mode === "forge" &&
-      ((i === 0 && this.sword >= 10) ||
-       (i === 1 && this.armor >= 10))
+      ((index === 0 && this.sword >= 10) ||
+       (index === 1 && this.armor >= 10))
     ) {
-      this.notice("อัปเกรดสูงสุดแล้ว");
+      this.message("อัปเกรดสูงสุดแล้ว");
       return;
     }
 
     this.gold -= cost;
 
     if (mode === "shop") {
-      if (i === 0) this.potions++;
-      if (i === 1) this.potions += 3;
-      if (i === 2) this.hp = this.maxHp;
-    } else {
-      if (i === 0) this.sword++;
+      if (index === 0) this.potions++;
+      if (index === 1) this.potions += 3;
+      if (index === 2) this.hp = this.maxHp;
+    }
 
-      if (i === 1) {
+    if (mode === "forge") {
+      if (index === 0) this.sword++;
+
+      if (index === 1) {
         this.armor++;
         this.maxHp += 25;
         this.hp += 25;
       }
 
-      if (i === 2) this.hp = this.maxHp;
+      if (index === 2) this.hp = this.maxHp;
     }
 
     this.saveGame();
     this.refreshPanel();
-    this.notice("สำเร็จ!");
+    this.message("สำเร็จ!");
   }
 
   usePotion() {
     if (this.potions <= 0) {
-      this.notice("ไม่มียา");
+      this.message("ไม่มียา");
       return;
     }
 
     if (this.hp >= this.maxHp) {
-      this.notice("HP เต็มแล้ว");
+      this.message("HP เต็มแล้ว");
       return;
     }
 
     this.potions--;
     this.hp = Math.min(this.maxHp, this.hp + 50);
     this.saveGame();
-    this.notice("ฟื้น HP +50");
+    this.message("HP +50");
   }
 
-  notice(text) {
+  message(text) {
     this.noticeText.setText(text);
     this.noticeText.setVisible(true);
     this.noticeText.setAlpha(1);
@@ -1214,17 +1352,18 @@ class Game extends P.Scene {
   }
 
   spawnEnemy(isBoss = false) {
-    let x, y;
+    let x = 0;
+    let y = 0;
     let found = false;
 
     for (let i = 0; i < 60; i++) {
-      x = P.Math.Between(70, WORLD.w - 70);
-      y = P.Math.Between(70, WORLD.h - 70);
+      x = Phaser3.Math.Between(70, WORLD_W - 70);
+      y = Phaser3.Math.Between(70, WORLD_H - 70);
 
-      if (this.safe(x, y, isBoss ? 200 : 100))
+      if (this.isSafe(x, y, isBoss ? 200 : 100))
         continue;
 
-      if (!this.walkable(x, y, isBoss ? 85 : 35))
+      if (!this.canWalk(x, y, isBoss ? 85 : 35))
         continue;
 
       if (
@@ -1242,99 +1381,95 @@ class Game extends P.Scene {
 
     const roll = Math.random();
 
-    const type = isBoss || roll < 0.35
+    const type = isBoss || roll < 0.45
       ? "hellhound"
       : roll < 0.8 ? "slime" : "boar";
 
-    const texture = type === "hellhound"
+    const key = type === "hellhound"
       ? (
         this.textures.exists("hellhound_idle")
           ? "hellhound_idle"
-          : "fallback_hell"
+          : "fallback_hellhound"
       )
-      : this.tex(`${type}_0`);
+      : this.texture(`${type}_0`);
 
-    const s = this.physics.add.sprite(
-      x, y, texture
+    const sprite = this.physics.add.sprite(
+      x, y, key
     ).setOrigin(0.5, 1);
 
-    const height = isBoss ? 210 :
-      type === "hellhound" ? 100 :
-      type === "boar" ? 90 : 76;
+    const height = isBoss ? 185 :
+      type === "hellhound" ? 95 : 70;
 
-    s.setDisplaySize(
-      s.width * height / s.height,
+    sprite.setDisplaySize(
+      sprite.width * height / sprite.height,
       height
     );
 
-    s.setCollideWorldBounds(true);
+    sprite.setCollideWorldBounds(true);
 
-    s.body.setSize(
-      s.width * 0.48,
-      s.height * 0.16
+    sprite.body.setSize(
+      sprite.width * 0.48,
+      sprite.height * 0.16
     );
 
-    s.body.setOffset(
-      s.width * 0.26,
-      s.height * 0.80
+    sprite.body.setOffset(
+      sprite.width * 0.26,
+      sprite.height * 0.8
     );
 
-    this.physics.add.collider(s, this.walls);
+    this.physics.add.collider(sprite, this.walls);
 
     const hp = isBoss ? 2200 :
       type === "hellhound" ? 125 :
       type === "boar" ? 85 : 45;
 
-    const m = {
+    const enemy = {
       type,
       boss: isBoss,
-      s,
+      sprite,
       hp,
       maxHp: hp,
       speed: isBoss ? 72 :
         type === "hellhound" ? 125 : 85,
       dead: false,
+      animation: "",
       state: "idle",
-      anim: "",
       lastAttack: 0,
       attackAt: 0,
       attackEnd: 0,
       attackDone: false,
       attackCount: 0,
-      stun: 0,
+      stunUntil: 0,
       knockX: 0,
       knockY: 0,
-      steerX: 0,
-      steerY: 0,
+      moveX: 0,
+      moveY: 0,
       nextAI: 0,
       frame: 0,
       lastFrame: 0,
       shadow: this.add.ellipse(
-        x, y, isBoss ? 100 : 45,
-        13, 0x10251b, 0.4
+        x, y, isBoss ? 95 : 42,
+        12, 0x10251b, 0.4
       ),
       bar: this.add.graphics()
     };
 
-    this.enemies.push(m);
+    this.enemies.push(enemy);
+    this.animateEnemy(enemy, "idle");
 
-    if (type === "hellhound") {
-      this.playEnemy(m, "idle");
-    }
-
-    return m;
+    return enemy;
   }
 
   spawnBoss() {
     if (this.boss && !this.boss.dead) {
-      this.notice("บอสยังอยู่ในแผนที่");
+      this.message("บอสยังอยู่ในแผนที่");
       return;
     }
 
     this.boss = this.spawnEnemy(true);
 
     if (this.boss) {
-      this.notice("HELLHOUND ALPHA ปรากฏตัว!");
+      this.message("HELLHOUND ALPHA ปรากฏตัว!");
       this.cameras.main.shake(180, 0.004);
     }
   }
@@ -1345,142 +1480,138 @@ class Game extends P.Scene {
     while (this.exp >= this.level * 50) {
       this.exp -= this.level * 50;
       this.level++;
-      this.hp = Math.min(
-        this.maxHp, this.hp + 30
-      );
-      this.notice(`LEVEL UP! Lv.${this.level}`);
+      this.hp = Math.min(this.maxHp, this.hp + 30);
+      this.message(`LEVEL UP! Lv.${this.level}`);
     }
   }
 
-  floatText(x, y, text, color) {
-    const t = this.add.text(
-      x, y, text,
+  floatingText(x, y, value, color) {
+    const text = this.add.text(
+      x, y, String(value),
       {
         fontFamily: "system-ui",
-        fontSize: "23px",
+        fontSize: "21px",
         fontStyle: "bold",
         color,
         stroke: "#241a18",
-        strokeThickness: 5
+        strokeThickness: 4
       }
     ).setOrigin(0.5).setDepth(15000);
 
     this.tweens.add({
-      targets: t,
-      y: y - 54,
+      targets: text,
+      y: y - 48,
       alpha: 0,
       duration: 650,
-      onComplete: () => t.destroy()
+      onComplete: () => text.destroy()
     });
   }
 
   sparks(x, y, color, count) {
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const distance = P.Math.Between(24, 75);
+      const distance = Phaser3.Math.Between(20, 65);
 
-      const p = this.add.circle(
-        x, y, P.Math.Between(2, 5), color
+      const particle = this.add.circle(
+        x, y, Phaser3.Math.Between(2, 4), color
       ).setDepth(15000);
 
       this.tweens.add({
-        targets: p,
+        targets: particle,
         x: x + Math.cos(angle) * distance,
         y: y + Math.sin(angle) * distance,
         alpha: 0,
-        duration: P.Math.Between(170, 380),
-        onComplete: () => p.destroy()
+        duration: Phaser3.Math.Between(160, 350),
+        onComplete: () => particle.destroy()
       });
     }
   }
 
-  hitEnemy(m, damage, dx, dy) {
-    if (m.dead) return;
+  damageEnemy(enemy, damage, dx, dy) {
+    if (enemy.dead) return;
 
-    m.hp -= damage;
-    m.stun = this.time.now + 180;
-    m.knockX = dx * (m.boss ? 100 : 260);
-    m.knockY = dy * (m.boss ? 100 : 260);
+    enemy.hp -= damage;
+    enemy.stunUntil = this.time.now + 180;
+    enemy.knockX = dx * (enemy.boss ? 100 : 260);
+    enemy.knockY = dy * (enemy.boss ? 100 : 260);
 
-    m.s.setTintFill(0xffffff);
+    enemy.sprite.setTintFill(0xffffff);
 
-    this.floatText(
-      m.s.x,
-      m.s.y - m.s.displayHeight - 12,
+    this.floatingText(
+      enemy.sprite.x,
+      enemy.sprite.y - enemy.sprite.displayHeight - 10,
       `-${damage}`,
       damage >= 45 ? "#ffcf69" : "#ffffff"
     );
 
     this.sparks(
-      m.s.x, m.s.y - 35,
+      enemy.sprite.x,
+      enemy.sprite.y - 35,
       0xffc04a, 8
     );
 
-    if (m.hp <= 0) {
-      this.killEnemy(m);
-    } else if (m.type === "hellhound") {
-      this.playEnemy(m, "hurt", true);
+    if (enemy.hp <= 0) {
+      this.killEnemy(enemy);
+    } else {
+      this.animateEnemy(enemy, "hurt", true);
     }
   }
 
-  killEnemy(m) {
-    if (m.dead) return;
+  killEnemy(enemy) {
+    if (enemy.dead) return;
 
-    m.dead = true;
-    m.state = "dead";
-    m.s.setVelocity(0, 0);
-    m.s.body.enable = false;
-    m.bar.clear();
+    enemy.dead = true;
+    enemy.sprite.setVelocity(0);
+    enemy.sprite.body.enable = false;
+    enemy.bar.clear();
 
     this.kills++;
 
     this.gainExp(
-      m.boss ? 500 :
-      m.type === "hellhound" ? 35 : 15
+      enemy.boss ? 500 :
+      enemy.type === "hellhound" ? 35 : 15
     );
 
     if (
-      m.type === "hellhound" &&
-      !m.boss &&
+      enemy.type === "hellhound" &&
+      !enemy.boss &&
       this.quest.accepted &&
       !this.quest.claimed
     ) {
       this.quest.kills++;
     }
 
-    if (m.boss) {
+    if (enemy.boss) {
       this.bossWins++;
       this.gold += 500;
       this.gems += 10;
-      this.notice("BOSS DEFEATED! +500 Gold");
-      this.cameras.main.flash(
-        220, 255, 180, 60
-      );
+      this.message("BOSS DEFEATED! +500 Gold");
+      this.cameras.main.flash(220, 255, 180, 60);
     }
 
     const finish = () => {
-      if (!m.s.active) return;
+      if (!enemy.sprite.active) return;
 
-      const x = m.s.x;
-      const y = m.s.y;
+      const x = enemy.sprite.x;
+      const y = enemy.sprite.y;
 
-      m.s.destroy();
-      m.shadow.destroy();
-      m.bar.destroy();
+      enemy.sprite.destroy();
+      enemy.shadow.destroy();
+      enemy.bar.destroy();
 
       this.enemies = this.enemies.filter(
-        e => e !== m
+        e => e !== enemy
       );
 
-      const count = m.boss ? 14 :
-        m.type === "hellhound" ? 5 : 3;
+      const count = enemy.boss ? 14 :
+        enemy.type === "hellhound" ? 5 : 3;
 
       for (let i = 0; i < count; i++) {
         const gem = Math.random() < 0.17;
 
         const obj = this.add.image(
-          x + P.Math.Between(-45, 45),
-          y + P.Math.Between(-25, 25),
+          x + Phaser3.Math.Between(-45, 45),
+          y + Phaser3.Math.Between(-25, 25),
           gem ? "gem" : "coin"
         ).setDepth(y + 2);
 
@@ -1491,13 +1622,13 @@ class Game extends P.Scene {
     };
 
     if (
-      m.type === "hellhound" &&
-      this.anims.exists("e_die")
+      enemy.type === "hellhound" &&
+      this.anims.exists("hellAnim_die")
     ) {
-      this.playEnemy(m, "die", true);
+      this.animateEnemy(enemy, "die", true);
 
-      m.s.once(
-        P.Animations.Events.ANIMATION_COMPLETE,
+      enemy.sprite.once(
+        Phaser3.Animations.Events.ANIMATION_COMPLETE,
         finish
       );
 
@@ -1524,7 +1655,7 @@ class Game extends P.Scene {
 
   slash(x, y, dir, combo) {
     const g = this.add.graphics()
-      .setPosition(x, y - 40)
+      .setPosition(x, y - 35)
       .setDepth(15000);
 
     const angle = {
@@ -1534,10 +1665,10 @@ class Game extends P.Scene {
       up: -Math.PI / 2
     }[dir];
 
-    const radius = combo === 3 ? 105 : 76;
+    const radius = combo === 3 ? 100 : 72;
 
     g.lineStyle(
-      combo === 3 ? 17 : 12,
+      combo === 3 ? 16 : 11,
       combo === 3 ? 0xff9b2d : 0x7cddff,
       0.85
     );
@@ -1550,7 +1681,7 @@ class Game extends P.Scene {
     );
     g.strokePath();
 
-    g.lineStyle(5, 0xffffff);
+    g.lineStyle(4, 0xffffff);
     g.beginPath();
     g.arc(
       0, 0, radius,
@@ -1569,7 +1700,7 @@ class Game extends P.Scene {
     });
 
     this.sparks(
-      x, y - 40,
+      x, y - 35,
       combo === 3 ? 0xffa12a : 0x8feeff,
       10
     );
@@ -1584,45 +1715,45 @@ class Game extends P.Scene {
       now - this.lastAttack < 290
     ) return;
 
-    this.combo = now < this.comboExpire
+    this.combo = now < this.comboUntil
       ? this.combo % 3 + 1 : 1;
 
-    this.comboExpire = now + 1050;
+    this.comboUntil = now + 1050;
     this.lastAttack = now;
     this.attacking = true;
-    this.attackDir = this.dir;
-    this.hitDone = false;
+    this.attackDirection = this.direction;
+    this.attackHit = false;
 
-    this.attackAt = now +
+    this.attackTime = now +
       (this.combo === 3 ? 220 : 125);
 
     this.attackEnd = now +
       (this.combo === 3 ? 480 : 335);
 
-    this.playHero(
-      "attack", this.attackDir, true
+    this.animateHero(
+      "attack", this.attackDirection, true
     );
   }
 
   resolveAttack() {
     const [dx, dy] = this.vector(
-      this.attackDir
+      this.attackDirection
     );
 
     this.slash(
       this.hero.x + dx * 48,
       this.hero.y + dy * 26,
-      this.attackDir,
+      this.attackDirection,
       this.combo
     );
 
     const range = this.combo === 3 ? 175 : 125;
 
-    for (const m of [...this.enemies]) {
-      if (m.dead) continue;
+    for (const enemy of [...this.enemies]) {
+      if (enemy.dead) continue;
 
-      const ex = m.s.x - this.hero.x;
-      const ey = m.s.y - this.hero.y;
+      const ex = enemy.sprite.x - this.hero.x;
+      const ey = enemy.sprite.y - this.hero.y;
       const dist = Math.hypot(ex, ey);
 
       if (
@@ -1638,7 +1769,7 @@ class Game extends P.Scene {
         this.combo === 2 ? 26 : 18
       ) + this.sword * 8;
 
-      this.hitEnemy(m, damage, dx, dy);
+      this.damageEnemy(enemy, damage, dx, dy);
     }
 
     if (this.combo === 3) {
@@ -1659,9 +1790,7 @@ class Game extends P.Scene {
     const ring = this.add.circle(
       this.hero.x,
       this.hero.y - 28,
-      22,
-      0xff7426,
-      0.15
+      22, 0xff7426, 0.15
     ).setStrokeStyle(9, 0xffbd4e)
       .setDepth(15000);
 
@@ -1677,22 +1806,21 @@ class Game extends P.Scene {
     this.sparks(
       this.hero.x,
       this.hero.y - 30,
-      0xffb13a,
-      30
+      0xffb13a, 24
     );
 
     this.cameras.main.shake(160, 0.004);
 
-    for (const m of [...this.enemies]) {
-      if (m.dead) continue;
+    for (const enemy of [...this.enemies]) {
+      if (enemy.dead) continue;
 
-      const dx = m.s.x - this.hero.x;
-      const dy = m.s.y - this.hero.y;
+      const dx = enemy.sprite.x - this.hero.x;
+      const dy = enemy.sprite.y - this.hero.y;
       const dist = Math.hypot(dx, dy);
 
       if (dist < 230) {
-        this.hitEnemy(
-          m,
+        this.damageEnemy(
+          enemy,
           65 + this.sword * 12,
           dist ? dx / dist : 1,
           dist ? dy / dist : 0
@@ -1706,7 +1834,7 @@ class Game extends P.Scene {
 
     if (
       now - this.lastHurt < 550 ||
-      this.safe(this.hero.x, this.hero.y)
+      this.isSafe(this.hero.x, this.hero.y)
     ) return;
 
     this.lastHurt = now;
@@ -1714,80 +1842,80 @@ class Game extends P.Scene {
     this.hero.setTintFill(0xff7777);
 
     this.time.delayedCall(140, () => {
-      if (this.hero.active) {
-        this.hero.clearTint();
-      }
+      if (this.hero.active) this.hero.clearTint();
     });
 
-    this.floatText(
+    this.floatingText(
       this.hero.x,
-      this.hero.y - 120,
+      this.hero.y - 100,
       `-${damage}`,
       "#ff7a7a"
     );
   }
 
   updateEnemies(now) {
-    for (const m of [...this.enemies]) {
-      if (m.dead) continue;
+    for (const enemy of [...this.enemies]) {
+      if (enemy.dead) continue;
 
-      const s = m.s;
+      const s = enemy.sprite;
       const dx = this.hero.x - s.x;
       const dy = this.hero.y - s.y;
       const dist = Math.hypot(dx, dy);
-
-      const heroSafe = this.safe(
+      const safe = this.isSafe(
         this.hero.x, this.hero.y, 10
       );
 
-      if (m.type === "hellhound") {
+      if (enemy.type === "hellhound") {
         s.setFlipX(this.hero.x < s.x);
       }
 
-      if (now < m.stun) {
-        s.setVelocity(m.knockX, m.knockY);
-        m.knockX *= 0.86;
-        m.knockY *= 0.86;
+      if (now < enemy.stunUntil) {
+        s.setVelocity(
+          enemy.knockX, enemy.knockY
+        );
+
+        enemy.knockX *= 0.86;
+        enemy.knockY *= 0.86;
       } else if (
-        m.state === "attack" &&
-        now < m.attackEnd
+        enemy.state === "attack" &&
+        now < enemy.attackEnd
       ) {
-        s.setVelocity(0, 0);
+        s.setVelocity(0);
 
         if (
-          !m.attackDone &&
-          now >= m.attackAt
+          !enemy.attackDone &&
+          now >= enemy.attackAt
         ) {
-          m.attackDone = true;
+          enemy.attackDone = true;
 
           this.sparks(
             s.x, s.y - 35,
             0xff7426,
-            m.boss ? 20 : 9
+            enemy.boss ? 16 : 8
           );
 
           if (
-            dist < (m.boss ? 150 : 83) &&
-            !heroSafe
+            dist < (enemy.boss ? 150 : 83) &&
+            !safe
           ) {
             this.hurtHero(
-              m.boss ? 22 : 9
+              enemy.boss ? 22 : 9
             );
           }
         }
       } else {
-        m.state = "idle";
+        enemy.state = "idle";
 
-        if (now >= m.nextAI) {
-          m.nextAI = now + 180;
+        if (now >= enemy.nextAI) {
+          enemy.nextAI = now + 180;
 
           if (
-            heroSafe ||
+            safe ||
             dist > 410 ||
-            dist < (m.boss ? 115 : 65)
+            dist < (enemy.boss ? 115 : 65)
           ) {
-            m.steerX = 0;
-            m.steerY = 0;
+            enemy.moveX = 0;
+            enemy.moveY = 0;
           } else {
             const ux = dx / dist;
             const uy = dy / dist;
@@ -1806,110 +1934,111 @@ class Game extends P.Scene {
               const ty = s.y + vy * 65;
 
               if (
-                this.walkable(tx, ty, 25) &&
-                !this.safe(tx, ty, 15)
+                this.canWalk(tx, ty, 25) &&
+                !this.isSafe(tx, ty, 15)
               ) {
                 chosen = [vx, vy];
                 break;
               }
             }
 
-            m.steerX = chosen[0];
-            m.steerY = chosen[1];
+            enemy.moveX = chosen[0];
+            enemy.moveY = chosen[1];
           }
         }
 
         s.setVelocity(
-          m.steerX * m.speed,
-          m.steerY * m.speed
+          enemy.moveX * enemy.speed,
+          enemy.moveY * enemy.speed
         );
 
         if (
-          !heroSafe &&
-          dist < (m.boss ? 140 : 78) &&
-          now - m.lastAttack >
-            (m.boss ? 1350 : 1800)
+          !safe &&
+          dist < (enemy.boss ? 140 : 78) &&
+          now - enemy.lastAttack >
+            (enemy.boss ? 1350 : 1800)
         ) {
-          m.lastAttack = now;
-          m.attackAt = now + 340;
-          m.attackEnd = now + 690;
-          m.attackDone = false;
-          m.state = "attack";
-          m.attackCount++;
+          enemy.lastAttack = now;
+          enemy.attackAt = now + 340;
+          enemy.attackEnd = now + 690;
+          enemy.attackDone = false;
+          enemy.state = "attack";
+          enemy.attackCount++;
 
-          this.playEnemy(
-            m,
-            m.attackCount % 2
-              ? "attack_1"
-              : "attack_2",
+          this.animateEnemy(
+            enemy,
+            enemy.attackCount % 2
+              ? "attack_1" : "attack_2",
             true
           );
-        } else if (m.type === "hellhound") {
-          this.playEnemy(
-            m,
-            dist < 400 && !heroSafe
-              ? "run" : "idle"
+        } else {
+          this.animateEnemy(
+            enemy,
+            dist < 400 && !safe ? "run" : "idle"
           );
         }
       }
 
       if (
-        m.type !== "hellhound" &&
-        now - m.lastFrame > 180
+        enemy.type !== "hellhound" &&
+        now - enemy.lastFrame > 180
       ) {
-        m.lastFrame = now;
-        m.frame = (m.frame + 1) % 4;
+        enemy.lastFrame = now;
+        enemy.frame = (enemy.frame + 1) % 4;
 
         s.setTexture(
-          this.tex(`${m.type}_${m.frame}`)
+          this.texture(
+            `${enemy.type}_${enemy.frame}`
+          )
         );
-        s.setDisplaySize(82, 74);
+
+        s.setDisplaySize(80, 70);
       }
 
-      if (now > m.stun) {
+      if (now > enemy.stunUntil) {
         s.clearTint();
       }
 
       s.setDepth(s.y);
+      enemy.shadow.setPosition(s.x, s.y);
+      enemy.shadow.setDepth(s.y - 1);
+      enemy.bar.clear();
 
-      m.shadow.setPosition(s.x, s.y);
-      m.shadow.setDepth(s.y - 1);
+      if (dist < 450 || enemy.boss) {
+        const width = enemy.boss ? 100 : 55;
+        const barY = s.y - s.displayHeight - 12;
 
-      m.bar.clear();
-
-      if (dist < 450 || m.boss) {
-        const bw = m.boss ? 100 : 55;
-        const by = s.y - s.displayHeight - 12;
-
-        m.bar.fillStyle(0x17221c);
-        m.bar.fillRect(
-          s.x - bw / 2, by, bw, 9
+        enemy.bar.fillStyle(0x17221c);
+        enemy.bar.fillRect(
+          s.x - width / 2,
+          barY, width, 9
         );
 
-        m.bar.fillStyle(
-          m.boss ? 0xff8c32 : 0xe34b48
+        enemy.bar.fillStyle(
+          enemy.boss ? 0xff8c32 : 0xe34b48
         );
 
-        m.bar.fillRect(
-          s.x - bw / 2 + 1,
-          by + 1,
-          (bw - 2) * Math.max(0, m.hp / m.maxHp),
+        enemy.bar.fillRect(
+          s.x - width / 2 + 1,
+          barY + 1,
+          (width - 2) *
+            Math.max(0, enemy.hp / enemy.maxHp),
           7
         );
 
-        m.bar.setDepth(s.y + 1);
+        enemy.bar.setDepth(s.y + 1);
       }
 
       if (
-        m.type !== "hellhound" &&
-        !heroSafe &&
+        enemy.type !== "hellhound" &&
+        !safe &&
         dist < 50 &&
-        now - m.lastAttack > 1500
+        now - enemy.lastAttack > 1500
       ) {
-        m.lastAttack = now;
+        enemy.lastAttack = now;
 
         this.hurtHero(
-          m.type === "boar" ? 6 : 4
+          enemy.type === "boar" ? 6 : 4
         );
       }
     }
@@ -1917,51 +2046,50 @@ class Game extends P.Scene {
 
   updateHUD() {
     const w = this.scale.width;
-    const bw = Math.min(
-      310, Math.max(145, w - 120)
-    );
+    const h = this.scale.height;
+    const landscape = w > h;
+    const width = landscape ? 235 : Math.min(310, w - 100);
 
     this.hud.clear();
 
-    this.hud.fillStyle(0x142335, 0.93);
+    this.hud.fillStyle(0x142335, 0.92);
     this.hud.fillRoundedRect(
-      8, 8, bw, 94, 8
+      8, 8, width, 79, 8
     );
 
     this.hud.lineStyle(2, 0xd2a35b);
     this.hud.strokeRoundedRect(
-      8, 8, bw, 94, 8
+      8, 8, width, 79, 8
     );
 
     this.hud.fillStyle(0x512f33);
-    this.hud.fillRect(15, 40, bw - 15, 12);
+    this.hud.fillRect(15, 35, width - 16, 10);
 
     this.hud.fillStyle(0xe35350);
     this.hud.fillRect(
-      15, 40,
-      (bw - 15) * this.hp / this.maxHp,
-      12
+      15, 35,
+      (width - 16) * this.hp / this.maxHp,
+      10
     );
 
     this.hud.fillStyle(0x243a51);
-    this.hud.fillRect(15, 61, bw - 15, 7);
+    this.hud.fillRect(15, 52, width - 16, 6);
 
     this.hud.fillStyle(0x55b8f5);
     this.hud.fillRect(
-      15, 61,
-      (bw - 15) * this.exp /
-        (this.level * 50),
-      7
+      15, 52,
+      (width - 16) *
+        this.exp / (this.level * 50),
+      6
     );
 
     this.hudText.setText(
-      `LV.${this.level} HP ${this.hp}/${this.maxHp}\n` +
-      `\n\nGold ${this.gold} Gem ${this.gems}` +
-      ` ATK ${18 + this.sword * 8}`
+      `LV.${this.level}  HP ${this.hp}/${this.maxHp}\n` +
+      `\n\nGold ${this.gold}  Gems ${this.gems}`
     );
 
-    this.potionBtn.setText(
-      `🧪 ${this.potions}`
+    this.potionButton.setText(
+      `POTION ${this.potions}`
     );
 
     this.bossBar.clear();
@@ -1969,22 +2097,22 @@ class Game extends P.Scene {
     if (this.boss && !this.boss.dead) {
       this.bossLabel.setVisible(true);
 
-      const width = Math.min(w - 70, 430);
-      const x = (w - width) / 2;
+      const bw = Math.min(w - 100, 350);
+      const x = (w - bw) / 2;
+      const y = landscape ? 73 : 112;
 
       this.bossBar.fillStyle(0x221b1b, 0.9);
       this.bossBar.fillRoundedRect(
-        x, 112, width, 16, 5
+        x, y, bw, 13, 4
       );
 
       this.bossBar.fillStyle(0xf06535);
       this.bossBar.fillRoundedRect(
-        x + 2, 114,
-        (width - 4) * Math.max(
-          0,
-          this.boss.hp / this.boss.maxHp
+        x + 2, y + 2,
+        (bw - 4) * Math.max(
+          0, this.boss.hp / this.boss.maxHp
         ),
-        12, 4
+        9, 3
       );
     } else {
       this.bossLabel.setVisible(false);
@@ -2018,41 +2146,40 @@ class Game extends P.Scene {
       y = 0;
     }
 
-    const length = Math.hypot(x, y);
+    const magnitude = Math.hypot(x, y);
 
-    if (length > 1) {
-      x /= length;
-      y /= length;
+    if (magnitude > 1) {
+      x /= magnitude;
+      y /= magnitude;
     }
 
     const speed = this.attacking ? 105 : 220;
 
     this.hero.setVelocity(
-      x * speed,
-      y * speed
+      x * speed, y * speed
     );
 
     if (this.attacking) {
       if (
-        !this.hitDone &&
-        now >= this.attackAt
+        !this.attackHit &&
+        now >= this.attackTime
       ) {
-        this.hitDone = true;
+        this.attackHit = true;
         this.resolveAttack();
       }
 
       if (now >= this.attackEnd) {
         this.attacking = false;
-        this.heroAction = "";
+        this.currentAnimation = "";
       }
     }
 
     if (!this.attacking) {
-      this.playHero(
-        length > 0.1 ? "walk" : "idle",
-        length > 0.1
+      this.animateHero(
+        magnitude > 0.1 ? "walk" : "idle",
+        magnitude > 0.1
           ? this.facing(x, y)
-          : this.dir
+          : this.direction
       );
     }
 
@@ -2097,7 +2224,7 @@ class Game extends P.Scene {
     }
 
     if (
-      this.enemies.filter(m => !m.boss).length < 14 &&
+      this.enemies.filter(e => !e.boss).length < 12 &&
       now - this.lastSpawn > 1200
     ) {
       this.lastSpawn = now;
@@ -2106,16 +2233,13 @@ class Game extends P.Scene {
 
     if (this.hp <= 0) {
       this.hp = this.maxHp;
-
-      this.hero.setPosition(
-        HOME.x, HOME.y + 95
-      );
+      this.hero.setPosition(1000, 850);
 
       this.cameras.main.flash(
         250, 240, 75, 75
       );
 
-      this.notice("กลับมาที่หมู่บ้านแล้ว");
+      this.message("กลับมาที่หมู่บ้านแล้ว");
     }
 
     if (now - this.lastSave > 10000) {
@@ -2127,16 +2251,16 @@ class Game extends P.Scene {
   }
 }
 
-new P.Game({
-  type: P.AUTO,
+new Phaser3.Game({
+  type: Phaser3.AUTO,
   parent: "game",
   backgroundColor: "#172b3a",
 
   scale: {
-    mode: P.Scale.RESIZE,
+    mode: Phaser3.Scale.RESIZE,
     width: window.innerWidth,
     height: window.innerHeight,
-    autoCenter: P.Scale.CENTER_BOTH
+    autoCenter: Phaser3.Scale.CENTER_BOTH
   },
 
   render: {
@@ -2151,10 +2275,8 @@ new P.Game({
 
   physics: {
     default: "arcade",
-    arcade: {
-      debug: false
-    }
+    arcade: { debug: false }
   },
 
-  scene: [Game]
+  scene: [QuarterRPG]
 });
