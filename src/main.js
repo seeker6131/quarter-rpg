@@ -2142,7 +2142,7 @@ new P.Game({
   render: {
     pixelArt: true,
     antialias: false,
-    roundPixels true
+    roundPixels: true
   },
 
   fps: {
