@@ -1,113 +1,2160 @@
-// QUARTER RPG V1.5 - integrated mobile Phaser 3 prototype
-// Place at src/main.js. Requires Phaser 3 loaded globally and <div id="game"></div>.
-const Phaser = window.Phaser;
-if (!Phaser) throw new Error('Load Phaser 3 before src/main.js');
-const W=2000,H=1500,SAVE='quarter-rpg-v15';
-const HERO_DIR=['down','up','left','right'],HERO_ACT=['idle','walk','attack'];
-const HELL={idle:8,walk:8,run:8,attack_1:8,attack_2:8,hurt:4,die:8};
-const V={x:1000,y:750,r:310};
-class RPG extends Phaser.Scene {
- constructor(){super('RPG')}
- preload(){
-  for(const a of HERO_ACT)for(const d of HERO_DIR)this.load.spritesheet(`hero_${a}_${d}`,`assets/hero_${a}_${d}.png`,{frameWidth:256,frameHeight:288});
-  for(const a of Object.keys(HELL))this.load.spritesheet(`hellhound_${a}`,`assets/hellhound_${a}.png`,{frameWidth:176,frameHeight:146});
-  for(const t of ['slime','boar'])for(let i=0;i<4;i++)this.load.image(`${t}_${i}`,`assets/${t}_${i}.png`);
-  for(const t of ['tree','bush','rock','flower','stump','grass','water'])this.load.image(t,`assets/${t}.png`);
-  this.load.on('loaderror',f=>console.warn('Missing asset',f.key));
- }
- create(){
-  this.physics.world.setBounds(0,0,W,H);this.cameras.main.setBackgroundColor('#396f4a');
-  this.makeArt();this.makeAnims();this.loadSave();
-  this.enemies=[];this.loot=[];this.colliders=[];this.npcs=[];this.blockGroup=this.physics.add.staticGroup();
-  this.buildWorld();this.buildVillage();
-  this.hero=this.physics.add.sprite(V.x,V.y+100,this.has('hero_idle_down')?'hero_idle_down':'fallback_hero').setOrigin(.5,1);
-  this.hero.setDisplaySize(94,106).setCollideWorldBounds(true);this.hero.body.setSize(this.hero.width*.35,this.hero.height*.12).setOffset(this.hero.width*.325,this.hero.height*.85);
-  this.physics.add.collider(this.hero,this.blockGroup);this.shadow=this.add.ellipse(this.hero.x,this.hero.y,46,12,0x14251c,.4);
-  this.dir='down';this.heroAction='';this.combo=0;this.comboExpire=0;this.attacking=false;this.attackAt=0;this.attackEnd=0;this.hitDone=false;this.lastAttack=-9999;this.lastSkill=-9999;this.lastHurt=-9999;
-  this.stick={x:0,y:0};this.joyPointer=null;this.attackPointer=null;this.attackHeld=false;this.panelMode='';this.targetNPC=null;this.lastSpawn=0;this.lastHud=0;this.lastSave=0;
-  this.cameras.main.setBounds(0,0,W,H).startFollow(this.hero,true,.12,.12).setRoundPixels(true);
-  this.makeUI();this.bindInput();this.resizeUI();this.scale.on('resize',this.resizeUI,this);
-  for(let i=0;i<14;i++)this.spawnEnemy();this.playHero('idle','down');
-  this.notice('GREENHAVEN — คุยกับ ELDER เพื่อรับเควสต์');
- }
- has(k){return this.textures.exists(k)}
- makeArt(){const g=this.make.graphics({x:0,y:0});const save=(k,w,h)=>{g.generateTexture(k,w,h);g.clear()};
-  g.fillStyle(0xffffff).fillRect(0,0,2,2);save('blank',2,2);
-  g.fillStyle(0x398e55).fillRect(0,0,64,64);g.fillStyle(0x4a9b5d).fillRect(6,8,9,5).fillRect(35,43,11,4);save('fallback_grass',64,64);
-  g.fillStyle(0x2877a6).fillRect(0,0,64,64);g.lineStyle(3,0x53a9ca,.5).lineBetween(7,20,45,20);save('fallback_water',64,64);
-  for(const [n,c] of [['tree',0x317743],['bush',0x5a9b51],['rock',0x7d8887],['flower',0xe8bd5a],['stump',0x845332]]){g.fillStyle(c).fillCircle(32,32,28);save('fallback_'+n,64,64)}
-  for(const [t,c] of [['slime',0x50cf70],['boar',0x996343]])for(let i=0;i<4;i++){g.fillStyle(c).fillEllipse(32,37+i%2,55,37);g.fillStyle(0x161c1a).fillRect(22,29,5,6).fillRect(41,29,5,6);save(`fallback_${t}_${i}`,64,64)}
-  g.fillStyle(0x26252b).fillEllipse(85,98,106,60).fillEllipse(125,73,64,54);g.fillStyle(0xff7426).fillRect(127,64,10,7).fillRect(45,121,16,8).fillRect(112,121,16,8);save('fallback_hell',176,146);
-  g.fillStyle(0x202b44).fillRect(23,37,30,53);g.fillStyle(0xf3c69a).fillRect(26,13,24,28);g.fillStyle(0x39251f).fillRect(23,8,30,12);g.fillStyle(0x243246).fillRect(26,90,10,24).fillRect(42,90,10,24);g.fillStyle(0xf3e5a1).fillRect(58,39,5,63);save('fallback_hero',80,120);
-  for(let i=0;i<3;i++){g.fillStyle([0x499465,0x9a7152,0x537ca5][i]).fillRect(17,41,33,50);g.fillStyle(0xf1bf92).fillRect(20,17,27,27);g.fillStyle(0x3d302a).fillRect(17,9,33,14);g.fillStyle(0x27334a).fillRect(19,91,11,24).fillRect(38,91,11,24);save('npc'+i,68,120)}
-  for(let i=0;i<3;i++){g.fillStyle(0x372b2b).fillRect(10,72,210,112);g.fillStyle(0xc8aa7d).fillRect(15,77,200,102);g.fillStyle([0xa84b3a,0x536e9d,0x8b6842][i]);g.fillPoints([{x:0,y:78},{x:115,y:5},{x:230,y:78}],true);g.fillStyle(0x4e3528).fillRect(97,127,37,52);g.fillStyle(0x4c7890).fillRect(39,112,34,31).fillRect(161,112,34,31);save('house'+i,230,190)}
-  g.fillStyle(0xf7d35a).fillCircle(12,12,10);save('coin',24,24);g.fillStyle(0x5bd9ff).fillPoints([{x:12,y:1},{x:23,y:12},{x:12,y:23},{x:1,y:12}],true);save('gem',24,24);g.destroy();
- }
- tex(n){return this.has(n)?n:'fallback_'+n}
- makeAnims(){for(const a of HERO_ACT)for(const d of HERO_DIR){const k=`hero_${a}_${d}`;if(!this.has(k))continue;this.anims.create({key:'h_'+a+'_'+d,frames:this.anims.generateFrameNumbers(k,{start:0,end:7}),frameRate:a==='attack'?16:a==='walk'?11:5,repeat:a==='attack'?0:-1})}
-  for(const [a,n] of Object.entries(HELL)){const k='hellhound_'+a;if(!this.has(k))continue;this.anims.create({key:'e_'+a,frames:this.anims.generateFrameNumbers(k,{start:0,end:n-1}),frameRate:a==='idle'?5:12,repeat:['idle','walk','run'].includes(a)?-1:0})}}
- playHero(a,d,force=false){const k='h_'+a+'_'+d;if(!force&&this.heroAction===k&&this.hero.anims.isPlaying)return;this.heroAction=k;this.dir=d;if(this.anims.exists(k))this.hero.play(k,true);else this.hero.setTexture('fallback_hero')}
- playEnemy(m,a,force=false){const k='e_'+a;if(m.type!=='hellhound'||!this.anims.exists(k))return;if(!force&&m.anim===a&&m.sprite.anims.isPlaying)return;m.anim=a;m.sprite.play(k,true)}
- block(x,y,w,h){this.colliders.push({x,y,w,h});const b=this.blockGroup.create(x,y,'blank');b.setDisplaySize(w,h).refreshBody().setVisible(false)}
- walkable(x,y,r=22){if(x<r||y<r||x>W-r||y>H-r)return false;return !this.colliders.some(b=>Math.abs(x-b.x)<b.w/2+r&&Math.abs(y-b.y)<b.h/2+r)}
- safe(x,y,pad=0){return Math.hypot(x-V.x,y-V.y)<V.r+pad}
- buildWorld(){this.add.tileSprite(W/2,H/2,W,H,this.tex('grass')).setDepth(-10000);this.add.tileSprite(1640,300,300,600,this.tex('water')).setDepth(-9998);this.block(1640,100,300,200);this.block(1640,480,300,240);
-  const bridge=this.add.graphics().setDepth(-9997);bridge.fillStyle(0x705034).fillRect(1450,200,400,120);for(let x=1455;x<1840;x+=28){bridge.lineStyle(3,0x30241e).lineBetween(x,200,x,320)}
-  const placed=[];for(let i=0;i<190;i++){for(let j=0;j<20;j++){const x=Phaser.Math.Between(75,W-75),y=Phaser.Math.Between(70,H-70);if(this.safe(x,y,120)||x>1450&&x<1850&&y<610||!this.walkable(x,y,60)||placed.some(p=>Math.hypot(x-p.x,y-p.y)<85))continue;const r=Math.random(),t=r<.36?'tree':r<.58?'bush':r<.75?'rock':r<.91?'flower':'stump';const img=this.add.image(x,y,this.tex(t)).setOrigin(.5,1);img.setScale(({tree:150,bush:65,rock:58,flower:28,stump:48})[t]/img.height).setDepth(y);if(['tree','rock','stump'].includes(t))this.block(x,y-12,t==='tree'?40:34,25);placed.push({x,y});break}}}
- buildVillage(){const g=this.add.graphics().setDepth(-100);g.fillStyle(0x7aaf67).fillEllipse(V.x,V.y,690,600);g.lineStyle(7,0xd4b17d).strokeEllipse(V.x,V.y,690,600);g.fillStyle(0xc9ac7f).fillEllipse(V.x,V.y+35,430,230);g.fillRect(V.x-35,V.y+40,70,390);g.fillStyle(0x5e6d72).fillEllipse(V.x,V.y-20,94,48);g.fillStyle(0x4396ba).fillEllipse(V.x,V.y-22,65,27);
-  for(const [x,y,id,name] of [[760,610,0,'SHOP'],[1240,610,1,'FORGE'],[1000,470,2,'HALL']]){this.add.image(x,y,'house'+id).setOrigin(.5,1).setDepth(y).setScale(.95);this.block(x,y-32,160,48);this.add.text(x,y-194,name,{fontFamily:'monospace',fontSize:'17px',color:'#ffe6a1',stroke:'#2a211b',strokeThickness:4}).setOrigin(.5).setDepth(y+1)}
-  this.addNPC(0,785,775,'MIRA','ร้านค้า');this.addNPC(1,1215,775,'BRON','ช่างตีเหล็ก');this.addNPC(2,1000,930,'ELDER','เควสต์');this.add.text(V.x,V.y+290,'GREENHAVEN  •  SAFE ZONE',{fontFamily:'monospace',fontSize:'21px',color:'#fff2bb',stroke:'#173a26',strokeThickness:5}).setOrigin(.5).setDepth(1100)}
- addNPC(id,x,y,name,role){const sprite=this.add.image(x,y,'npc'+id).setOrigin(.5,1).setDisplaySize(61,108).setDepth(y).setInteractive();const tag=this.add.text(x,y-125,`${name}\n${role}`,{fontFamily:'system-ui',fontSize:'15px',align:'center',color:'#ffe9b1',stroke:'#162b1d',strokeThickness:4}).setOrigin(.5).setDepth(y+1);const npc={id,x,y,name,role,sprite,tag};this.npcs.push(npc);sprite.on('pointerdown',()=>this.talk(npc))}
- loadSave(){let s={};try{s=JSON.parse(localStorage.getItem(SAVE)||'{}')}catch{}this.level=s.level||1;this.exp=s.exp||0;this.gold=s.gold??100;this.gems=s.gems||0;this.kills=s.kills||0;this.sword=s.sword||0;this.armor=s.armor||0;this.potions=s.potions??3;this.quest=s.quest||{accepted:false,kills:0,claimed:false};this.bossDefeated=s.bossDefeated||0;this.maxHp=100+this.armor*25;this.hp=this.maxHp}
- save(){try{localStorage.setItem(SAVE,JSON.stringify({level:this.level,exp:this.exp,gold:this.gold,gems:this.gems,kills:this.kills,sword:this.sword,armor:this.armor,potions:this.potions,quest:this.quest,bossDefeated:this.bossDefeated}))}catch(e){console.warn('Save failed',e)}}
- makeUI(){const ui=o=>o.setScrollFactor(0).setDepth(20000);this.hud=ui(this.add.graphics());this.hudText=ui(this.add.text(15,14,'',{fontFamily:'system-ui',fontSize:'14px',color:'#fff',fontStyle:'bold'}));this.noticeText=ui(this.add.text(0,150,'',{fontFamily:'system-ui',fontSize:'16px',color:'#fff',backgroundColor:'#182d3ee8',padding:{x:12,y:8},align:'center'}).setOrigin(.5)).setVisible(false);
-  this.joyBase=ui(this.add.circle(90,0,61,0x163349,.72).setStrokeStyle(3,0xb6d9ec));this.joyKnob=ui(this.add.circle(90,0,26,0xa8d8f1));this.attackBtn=ui(this.add.circle(0,0,48,0xa83d2d).setStrokeStyle(4,0xffc569));this.attackLabel=ui(this.add.text(0,0,'⚔',{fontSize:'32px'}).setOrigin(.5));this.skillBtn=ui(this.add.circle(0,0,35,0x30518b).setStrokeStyle(3,0xe3d36e));this.skillLabel=ui(this.add.text(0,0,'✦',{fontSize:'28px',color:'#fff'}).setOrigin(.5));this.potionBtn=ui(this.add.text(0,0,'🧪 ยา',{fontSize:'16px',color:'#fff',backgroundColor:'#713d6a',padding:{x:12,y:9}}).setOrigin(.5).setInteractive());this.talkBtn=ui(this.add.text(0,0,'💬 คุย',{fontSize:'16px',color:'#fff',backgroundColor:'#3b7553',padding:{x:12,y:10}}).setOrigin(.5).setInteractive());this.bagBtn=ui(this.add.text(0,0,'🎒 กระเป๋า',{fontSize:'15px',color:'#fff',backgroundColor:'#3b5476',padding:{x:10,y:8}}).setOrigin(.5).setInteractive());this.potionBtn.on('pointerdown',()=>this.usePotion());this.talkBtn.on('pointerdown',()=>{const n=this.nearNPC();if(n)this.talk(n);else this.notice('เข้าใกล้ NPC ก่อน')});this.bagBtn.on('pointerdown',()=>this.openPanel('bag'));
-  this.panel=ui(this.add.container(0,0)).setVisible(false);this.panelG=this.add.graphics();this.panel.add(this.panelG);this.panelTitle=this.add.text(0,0,'',{fontFamily:'system-ui',fontSize:'23px',color:'#ffdd8c',fontStyle:'bold'}).setOrigin(.5);this.panelInfo=this.add.text(0,0,'',{fontFamily:'system-ui',fontSize:'15px',color:'#fff',align:'center',wordWrap:{width:300}}).setOrigin(.5);this.panel.add([this.panelTitle,this.panelInfo]);this.panelButtons=[];for(let i=0;i<4;i++){const b=this.add.text(0,0,'',{fontFamily:'system-ui',fontSize:'16px',color:'#fff',backgroundColor:'#365c50',padding:{x:12,y:11},align:'center'}).setOrigin(.5).setInteractive();b.on('pointerdown',()=>this.panelAction(i));this.panel.add(b);this.panelButtons.push(b)}this.closeBtn=this.add.text(0,0,'✕ ปิด',{fontFamily:'system-ui',fontSize:'17px',color:'#fff',backgroundColor:'#923f44',padding:{x:15,y:9}}).setOrigin(.5).setInteractive();this.closeBtn.on('pointerdown',()=>this.closePanel());this.panel.add(this.closeBtn);
-  this.bossBar=ui(this.add.graphics());this.bossLabel=ui(this.add.text(0,0,'HELLHOUND ALPHA',{fontFamily:'monospace',fontSize:'17px',fontStyle:'bold',color:'#ffb782',stroke:'#221717',strokeThickness:3}).setOrigin(.5)).setVisible(false);
- }
- resizeUI(){const w=this.scale.width,h=this.scale.height;const left=w<450?85:105,right=w-(w<450?80:105),bottom=h-100;this.joyBase.setPosition(left,bottom);this.joyKnob.setPosition(left,bottom);this.attackBtn.setPosition(right,bottom);this.attackLabel.setPosition(right,bottom);this.skillBtn.setPosition(right-32,bottom-105);this.skillLabel.setPosition(right-32,bottom-105);this.potionBtn.setPosition(right,bottom-175);this.talkBtn.setPosition(w/2,h-62);this.bagBtn.setPosition(w/2,50);this.noticeText.setPosition(w/2,150);this.bossLabel.setPosition(w/2,96);
-  const cx=w/2,cy=h/2,pw=Math.min(w-20,390),ph=Math.min(h-20,510);this.panelG.clear().fillStyle(0x101c2b,.98).fillRoundedRect(cx-pw/2,cy-ph/2,pw,ph,12).lineStyle(3,0xd7aa5e).strokeRoundedRect(cx-pw/2,cy-ph/2,pw,ph,12);this.panelTitle.setPosition(cx,cy-ph/2+34);this.panelInfo.setPosition(cx,cy-ph/2+92);this.panelButtons.forEach((b,i)=>b.setPosition(cx,cy-50+i*56));this.closeBtn.setPosition(cx,cy+ph/2-35);this.refreshPanel()}
- notice(t){this.noticeText.setText(t).setVisible(true).setAlpha(1);this.tweens.killTweensOf(this.noticeText);this.tweens.add({targets:this.noticeText,alpha:0,delay:1700,duration:350,onComplete:()=>this.noticeText.setVisible(false)})}
- bindInput(){this.keys=this.input.keyboard.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,E,Q,I');this.input.addPointer(2);this.input.on('pointerdown',p=>{if(this.panelMode)return;const w=this.scale.width,h=this.scale.height;if(p.x<w*.46&&p.y>h*.43&&this.joyPointer===null){this.joyPointer=p.id;this.moveStick(p);return}if(Phaser.Math.Distance.Between(p.x,p.y,this.skillBtn.x,this.skillBtn.y)<43){this.skill();return}if(Phaser.Math.Distance.Between(p.x,p.y,this.attackBtn.x,this.attackBtn.y)<62){this.attackPointer=p.id;this.attackHeld=true;this.attack()}});this.input.on('pointermove',p=>{if(p.id===this.joyPointer)this.moveStick(p)});const release=p=>{if(p.id===this.joyPointer){this.joyPointer=null;this.stick={x:0,y:0};this.joyKnob.setPosition(this.joyBase.x,this.joyBase.y)}if(p.id===this.attackPointer){this.attackPointer=null;this.attackHeld=false}};this.input.on('pointerup',release);this.input.on('pointerupoutside',release);this.keys.E.on('down',()=>{const n=this.nearNPC();if(n&&!this.panelMode)this.talk(n)});this.keys.Q.on('down',()=>this.usePotion());this.keys.I.on('down',()=>this.panelMode?this.closePanel():this.openPanel('bag'))}
- moveStick(p){const dx=p.x-this.joyBase.x,dy=p.y-this.joyBase.y,dist=Math.hypot(dx,dy),power=Math.min(1,dist/55);this.stick=dist?{x:dx/dist*power,y:dy/dist*power}:{x:0,y:0};this.joyKnob.setPosition(this.joyBase.x+this.stick.x*43,this.joyBase.y+this.stick.y*43)}
- nearNPC(){let best=null,dist=135;for(const n of this.npcs){const d=Math.hypot(n.x-this.hero.x,n.y-this.hero.y);if(d<dist){dist=d;best=n}}return best}
- talk(n){if(Math.hypot(n.x-this.hero.x,n.y-this.hero.y)>145){this.notice('เดินเข้าใกล้ NPC ก่อน');return}this.targetNPC=n;this.openPanel(n.id===0?'shop':n.id===1?'forge':'quest')}
- openPanel(mode){this.panelMode=mode;this.attackHeld=false;this.stick={x:0,y:0};this.hero.setVelocity(0);this.panel.setVisible(true);this.refreshPanel()}
- closePanel(){this.panelMode='';this.panel.setVisible(false);this.targetNPC=null}
- refreshPanel(){if(!this.panel||!this.panelMode)return;let title='',info='',buttons=[];if(this.panelMode==='shop'){title='MIRA • ร้านค้า';info=`Gold: ${this.gold}   ยา: ${this.potions}`;buttons=['🧪 ยาฟื้น HP +50 — 20 G','🧪 ยาฟื้น HP x3 — 50 G','❤️ ฟื้น HP เต็ม — 15 G']}
-  if(this.panelMode==='forge'){title='BRON • ช่างตีเหล็ก';info=`Gold: ${this.gold} | ดาบ +${this.sword} | เกราะ +${this.armor}`;buttons=[`⚔ เพิ่ม ATK +8 — ${60*(this.sword+1)} G`,`🛡 เพิ่ม HP +25 — ${50*(this.armor+1)} G`,'❤️ ฟื้น HP — 10 G']}
-  if(this.panelMode==='quest'){title='ELDER • เควสต์';info=this.quest.claimed?'เจ้าช่วยหมู่บ้านไว้แล้ว!':this.quest.accepted?`กำจัด Hellhound ${Math.min(this.quest.kills,5)}/5\nรางวัล 300 Gold + 200 EXP`:'ป่ากำลังถูก Hellhound รุกราน\nช่วยกำจัด 5 ตัวได้ไหม?';buttons=this.quest.claimed?['รับทราบ']:this.quest.accepted?this.quest.kills>=5?['🎁 รับรางวัล']:['กำลังทำเควสต์...']:['📜 รับเควสต์'];buttons.push(`🔥 บอส Alpha (${this.bossDefeated} ชนะ)`)}
-  if(this.panelMode==='bag'){title='🎒 กระเป๋า';info=`Lv.${this.level}  HP ${this.hp}/${this.maxHp}\nATK ${18+this.sword*8} | DEF ${this.armor*3}\nGold ${this.gold} | Gems ${this.gems}\nดาบ +${this.sword} | เกราะ +${this.armor}\nยาฟื้น HP: ${this.potions}`;buttons=['🧪 ใช้ยาฟื้น HP','📜 ดูเควสต์']}
-  this.panelTitle.setText(title);this.panelInfo.setText(info);this.panelButtons.forEach((b,i)=>{b.setVisible(i<buttons.length);if(i<buttons.length)b.setText(buttons[i])})}
- panelAction(i){const mode=this.panelMode;let cost=0;if(mode==='shop'){cost=[20,50,15][i];if(cost===undefined)return;if(this.gold<cost)return this.notice('Gold ไม่พอ');this.gold-=cost;if(i===0)this.potions++;if(i===1)this.potions+=3;if(i===2)this.hp=this.maxHp;this.notice('ซื้อสำเร็จ')}
-  else if(mode==='forge'){if(i===0&&this.sword>=10)return this.notice('ดาบเต็มระดับแล้ว');if(i===1&&this.armor>=10)return this.notice('เกราะเต็มระดับแล้ว');cost=i===0?60*(this.sword+1):i===1?50*(this.armor+1):i===2?10:0;if(i>2)return;if(this.gold<cost)return this.notice('Gold ไม่พอ');this.gold-=cost;if(i===0)this.sword++;if(i===1){this.armor++;this.maxHp+=25;this.hp=Math.min(this.maxHp,this.hp+25)}if(i===2)this.hp=this.maxHp;this.notice('อัปเกรดสำเร็จ')}
-  else if(mode==='quest'){if(i===1){this.closePanel();this.spawnBoss();return}if(this.quest.claimed)return;if(!this.quest.accepted){this.quest.accepted=true;this.notice('รับเควสต์แล้ว')}else if(this.quest.kills>=5){this.quest.claimed=true;this.gold+=300;this.gainExp(200);this.notice('สำเร็จ! +300 Gold +200 EXP')}else this.notice('กำจัด Hellhound ให้ครบ 5 ตัว')}
-  else if(mode==='bag'){if(i===0)this.usePotion();if(i===1){this.panelMode='quest';this.refreshPanel();return}}
-  this.save();this.refreshPanel()}
- usePotion(){if(this.potions<=0)return this.notice('ไม่มียา');if(this.hp>=this.maxHp)return this.notice('HP เต็มแล้ว');this.potions--;this.hp=Math.min(this.maxHp,this.hp+50);this.save();this.notice('HP +50');this.refreshPanel()}
- spawnEnemy(boss=false){let x,y,ok=false;for(let i=0;i<70;i++){x=Phaser.Math.Between(90,W-90);y=Phaser.Math.Between(90,H-90);if(!this.safe(x,y,100)&&this.walkable(x,y,40)&&Math.hypot(x-this.hero.x,y-this.hero.y)>270&&this.enemies.every(m=>m.dead||Math.hypot(x-m.s.x,y-m.s.y)>70)){ok=true;break}}if(!ok)return null;const roll=Math.random(),type=boss?'hellhound':roll<.34?'hellhound':roll<.79?'slime':'boar';const texture=type==='hellhound'?(this.has('hellhound_idle')?'hellhound_idle':'fallback_hell'):this.tex(`${type}_0`);const s=this.physics.add.sprite(x,y,texture).setOrigin(.5,1);s.setDisplaySize(boss?235:type==='hellhound'?105:82,boss?190:type==='hellhound'?95:74).setCollideWorldBounds(true);s.body.setSize(s.width*.5,s.height*.17).setOffset(s.width*.25,s.height*.8);this.physics.add.collider(s,this.blockGroup);const hp=boss?1800:type==='hellhound'?130:type==='boar'?90:55;const m={type,boss,s,hp,maxHp:hp,speed:boss?85:type==='hellhound'?132:type==='boar'?95:80,dead:false,state:'idle',anim:'',lastAttack:0,attackAt:0,attackEnd:0,attackDone:false,attackCount:0,stun:0,knockX:0,knockY:0,steerX:0,steerY:0,nextAI:0,frame:0,lastFrame:0,shadow:this.add.ellipse(x,y,boss?100:45,13,0x10251b,.4),bar:this.add.graphics()};this.enemies.push(m);if(type==='hellhound')this.playEnemy(m,'idle');return m}
- spawnBoss(){if(this.boss&&!this.boss.dead){this.notice('บอสยังอยู่ในแผนที่');return}this.boss=this.spawnEnemy(true);if(this.boss){this.notice('HELLHOUND ALPHA ปรากฏตัวแล้ว!');this.cameras.main.shake(180,.004)}}
- gainExp(v){this.exp+=v;while(this.exp>=this.level*50){this.exp-=this.level*50;this.level++;this.hp=Math.min(this.maxHp,this.hp+30);this.notice('LEVEL UP! Lv.'+this.level)}}
- hitEnemy(m,dmg,dx,dy){if(m.dead)return;m.hp-=dmg;m.stun=this.time.now+180;m.knockX=dx*(m.boss?100:260);m.knockY=dy*(m.boss?100:260);m.s.setTintFill(0xffffff);this.floatText(m.s.x,m.s.y-m.s.displayHeight-12,'-'+dmg,dmg>=45?'#ffcf69':'#ffffff');this.spark(m.s.x,m.s.y-35,0xffc04a,8);if(m.hp<=0)this.killEnemy(m);else if(m.type==='hellhound')this.playEnemy(m,'hurt',true)}
- killEnemy(m){if(m.dead)return;m.dead=true;m.state='dead';m.s.setVelocity(0);m.s.body.enable=false;m.bar.clear();this.kills++;this.gainExp(m.boss?500:m.type==='hellhound'?35:15);if(m.type==='hellhound'&&!m.boss&&this.quest.accepted&&!this.quest.claimed)this.quest.kills++;if(m.boss){this.bossDefeated++;this.gold+=500;this.gems+=10;this.notice('BOSS DEFEATED! +500 Gold +10 Gems');this.cameras.main.flash(220,255,180,60)}const done=()=>{if(!m.s.active)return;const x=m.s.x,y=m.s.y;m.s.destroy();m.shadow.destroy();m.bar.destroy();this.enemies=this.enemies.filter(e=>e!==m);for(let i=0;i<(m.boss?14:m.type==='hellhound'?5:3);i++){const gem=Math.random()<.17;const obj=this.add.image(x+Phaser.Math.Between(-45,45),y+Phaser.Math.Between(-25,25),gem?'gem':'coin').setDepth(y+2);this.loot.push({obj,gem})}this.save()};if(m.type==='hellhound'&&this.anims.exists('e_die')){this.playEnemy(m,'die',true);m.s.once(Phaser.Animations.Events.ANIMATION_COMPLETE,done);this.time.delayedCall(850,done)}else done()}
- floatText(x,y,t,c){const o=this.add.text(x,y,t,{fontFamily:'system-ui',fontSize:'23px',fontStyle:'bold',color:c,stroke:'#281b18',strokeThickness:5}).setOrigin(.5).setDepth(15000);this.tweens.add({targets:o,y:y-54,alpha:0,duration:650,onComplete:()=>o.destroy()})}
- spark(x,y,color,n){for(let i=0;i<n;i++){const a=Math.random()*Math.PI*2,d=Phaser.Math.Between(24,76),o=this.add.circle(x,y,Phaser.Math.Between(2,5),color).setDepth(15000);this.tweens.add({targets:o,x:x+Math.cos(a)*d,y:y+Math.sin(a)*d,alpha:0,duration:Phaser.Math.Between(170,380),onComplete:()=>o.destroy()})}}
- slash(x,y,dir,power){const g=this.add.graphics().setPosition(x,y-40).setDepth(15000);const a={right:0,left:Math.PI,down:Math.PI/2,up:-Math.PI/2}[dir],r=power===3?105:76;g.lineStyle(power===3?17:12,power===3?0xff9b2d:0x7cddff,.85).beginPath().arc(0,0,r,a-1.15,a+1.15).strokePath();g.lineStyle(5,0xffffff).beginPath().arc(0,0,r,a-1.15,a+1.15).strokePath();this.tweens.add({targets:g,alpha:0,scaleX:1.25,scaleY:1.25,duration:220,onComplete:()=>g.destroy()});this.spark(x,y-40,power===3?0xffa12a:0x8feeff,10)}
- facing(x,y){return Math.abs(x)>Math.abs(y)?x<0?'left':'right':y<0?'up':'down'}
- vector(d){return {down:[0,1],up:[0,-1],left:[-1,0],right:[1,0]}[d]}
- attack(){const now=this.time.now;if(this.panelMode||this.attacking||now-this.lastAttack<290)return;this.combo=now<this.comboExpire?this.combo%3+1:1;this.comboExpire=now+1050;this.lastAttack=now;this.attacking=true;this.attackDir=this.dir;this.hitDone=false;this.attackAt=now+(this.combo===3?220:125);this.attackEnd=now+(this.combo===3?480:335);this.playHero('attack',this.attackDir,true)}
- resolveAttack(){const [dx,dy]=this.vector(this.attackDir);this.slash(this.hero.x+dx*48,this.hero.y+dy*26,this.attackDir,this.combo);const range=this.combo===3?175:125;for(const m of [...this.enemies]){if(m.dead)continue;const ex=m.s.x-this.hero.x,ey=m.s.y-this.hero.y,dist=Math.hypot(ex,ey);if(dist>range||dist<1||ex*dx+ey*dy< -10||Math.abs(ex*dy-ey*dx)>(this.combo===3?125:80))continue;this.hitEnemy(m,(this.combo===3?44:this.combo===2?26:18)+this.sword*8,dx,dy)}if(this.combo===3)this.cameras.main.shake(90,.003)}
- skill(){const now=this.time.now;if(this.panelMode||now-this.lastSkill<4000)return;this.lastSkill=now;const g=this.add.circle(this.hero.x,this.hero.y-28,22,0xff7426,.15).setStrokeStyle(9,0xffbd4e).setDepth(15000);this.tweens.add({targets:g,scaleX:10,scaleY:10,alpha:0,duration:400,onComplete:()=>g.destroy()});this.spark(this.hero.x,this.hero.y-30,0xffb13a,30);this.cameras.main.shake(160,.004);for(const m of [...this.enemies]){if(m.dead)continue;const dx=m.s.x-this.hero.x,dy=m.s.y-this.hero.y,dist=Math.hypot(dx,dy);if(dist<230)this.hitEnemy(m,65+this.sword*12,dist?dx/dist:1,dist?dy/dist:0)}}
- updateEnemies(now,dt){for(const m of [...this.enemies]){if(m.dead)continue;const s=m.s,dx=this.hero.x-s.x,dy=this.hero.y-s.y,dist=Math.hypot(dx,dy),heroSafe=this.safe(this.hero.x,this.hero.y,10);if(m.type==='hellhound')s.setFlipX(this.hero.x<s.x);
-   if(now<m.stun){s.setVelocity(m.knockX,m.knockY);m.knockX*=.86;m.knockY*=.86}else if(m.state==='attack'&&now<m.attackEnd){s.setVelocity(0);if(!m.attackDone&&now>=m.attackAt){m.attackDone=true;this.spark(s.x,s.y-35,0xff7426,m.boss?20:9);if(dist<(m.boss?150:83)&&!heroSafe)this.hurtHero(m.boss?22:9)}}else{m.state='idle';if(now>=m.nextAI){m.nextAI=now+180;if(heroSafe||dist>410||dist<(m.boss?115:65)){m.steerX=0;m.steerY=0}else{const ux=dx/dist,uy=dy/dist;const opts=[[ux,uy],[-uy,ux],[uy,-ux],[-ux,-uy]];let found=[0,0];for(const [vx,vy] of opts){const tx=s.x+vx*65,ty=s.y+vy*65;if(this.walkable(tx,ty,25)&&!this.safe(tx,ty,15)){found=[vx,vy];break}}m.steerX=found[0];m.steerY=found[1]}}s.setVelocity(m.steerX*m.speed,m.steerY*m.speed);
-    if(!heroSafe&&dist<(m.boss?140:78)&&now-m.lastAttack>(m.boss?1350:1800)){m.lastAttack=now;m.attackAt=now+340;m.attackEnd=now+690;m.attackDone=false;m.state='attack';m.attackCount++;this.playEnemy(m,m.attackCount%2?'attack_1':'attack_2',true)}else if(m.type==='hellhound'){this.playEnemy(m,dist<400&&!heroSafe?'run':'idle')}}
-   if(m.type!=='hellhound'&&now-m.lastFrame>180){m.lastFrame=now;m.frame=(m.frame+1)%4;s.setTexture(this.tex(`${m.type}_${m.frame}`));s.setDisplaySize(82,74)}if(now>m.stun)s.clearTint();s.setDepth(s.y);m.shadow.setPosition(s.x,s.y).setDepth(s.y-1);m.bar.clear();if(dist<450||m.boss){const bw=m.boss?100:55,by=s.y-s.displayHeight-12;m.bar.fillStyle(0x17221c).fillRect(s.x-bw/2,by,bw,9);m.bar.fillStyle(m.boss?0xff8c32:0xe34b48).fillRect(s.x-bw/2+1,by+1,(bw-2)*Math.max(0,m.hp/m.maxHp),7);m.bar.setDepth(s.y+1)}if(m.type!=='hellhound'&&!heroSafe&&dist<50&&now-m.lastAttack>1500){m.lastAttack=now;this.hurtHero(m.type==='boar'?6:4)}}}
- hurtHero(dmg){const now=this.time.now;if(now-this.lastHurt<550||this.safe(this.hero.x,this.hero.y))return;this.lastHurt=now;this.hp=Math.max(0,this.hp-dmg);this.hero.setTintFill(0xff7777);this.time.delayedCall(140,()=>{if(this.hero.active)this.hero.clearTint()});this.floatText(this.hero.x,this.hero.y-120,'-'+dmg,'#ff7a7a')}
- updateHUD(now){if(now-this.lastHud<130)return;this.lastHud=now;const w=this.scale.width,bw=Math.min(310,Math.max(145,w-120));this.hud.clear().fillStyle(0x142335,.93).fillRoundedRect(8,8,bw,94,8).lineStyle(2,0xd2a35b).strokeRoundedRect(8,8,bw,94,8).fillStyle(0x512f33).fillRect(15,40,bw-15,12).fillStyle(0xe35350).fillRect(15,40,(bw-15)*this.hp/this.maxHp,12).fillStyle(0x243a51).fillRect(15,61,bw-15,7).fillStyle(0x55b8f5).fillRect(15,61,(bw-15)*this.exp/(this.level*50),7);this.hudText.setText(`LV.${this.level}  HP ${this.hp}/${this.maxHp}\n\n\nGold ${this.gold}  Gem ${this.gems}  ATK ${18+this.sword*8}`);this.potionBtn.setText(`🧪 ${this.potions}`);this.bossBar.clear();if(this.boss&&!this.boss.dead){this.bossLabel.setVisible(true);const width=Math.min(w-70,430),x=(w-width)/2;this.bossBar.fillStyle(0x221b1b,.9).fillRoundedRect(x,112,width,16,5).fillStyle(0xf06535).fillRoundedRect(x+2,114,(width-4)*Math.max(0,this.boss.hp/this.boss.maxHp),12,4)}else this.bossLabel.setVisible(false)}
- update(now,delta){const dt=Math.min(delta/1000,.05);let x=this.stick.x,y=this.stick.y;if(!this.panelMode){x+=Number(this.keys.D.isDown||this.keys.RIGHT.isDown)-Number(this.keys.A.isDown||this.keys.LEFT.isDown);y+=Number(this.keys.S.isDown||this.keys.DOWN.isDown)-Number(this.keys.W.isDown||this.keys.UP.isDown)}else{x=0;y=0}const mag=Math.hypot(x,y);if(mag>1){x/=mag;y/=mag}this.hero.setVelocity(x*(this.attacking?105:220),y*(this.attacking?105:220));if(this.attacking){if(!this.hitDone&&now>=this.attackAt){this.hitDone=true;this.resolveAttack()}if(now>=this.attackEnd){this.attacking=false;this.heroAction=''}}if(!this.attacking)this.playHero(mag>.1?'walk':'idle',mag>.1?this.facing(x,y):this.dir);this.hero.setDepth(this.hero.y);this.shadow.setPosition(this.hero.x,this.hero.y).setDepth(this.hero.y-1);
-  if(!this.panelMode&&(this.attackHeld||this.keys.SPACE.isDown)&&!this.attacking&&now-this.lastAttack>290)this.attack();this.updateEnemies(now,dt);
-  for(let i=this.loot.length-1;i>=0;i--){const l=this.loot[i],o=l.obj,dx=this.hero.x-o.x,dy=this.hero.y-o.y,dist=Math.hypot(dx,dy);if(dist<140){o.x+=dx*Math.min(1,dt*8);o.y+=dy*Math.min(1,dt*8)}if(dist<25){if(l.gem)this.gems++;else this.gold+=5;o.destroy();this.loot.splice(i,1)}}
-  if(this.enemies.filter(m=>!m.boss).length<14&&now-this.lastSpawn>1200){this.lastSpawn=now;this.spawnEnemy()}if(this.hp<=0){this.hp=this.maxHp;this.hero.setPosition(V.x,V.y+100);this.cameras.main.flash(250,240,75,75);this.notice('กลับมาที่หมู่บ้านแล้ว')}if(now-this.lastSave>10000){this.lastSave=now;this.save()}this.updateHUD(now)
- }
+
+/*
+ QUARTER RPG V1.5
+ Phaser 3 | Mobile | GitHub Pages
+ Full replacement for src/main.js
+*/
+
+const P = window.Phaser;
+if (!P) throw Error("Load Phaser 3 first");
+
+const WORLD = { w: 2000, h: 1500 };
+const HOME = { x: 1000, y: 750, r: 300 };
+const SAVE = "quarter-rpg-v15";
+const DIRS = ["down", "up", "left", "right"];
+const ACTIONS = ["idle", "walk", "attack"];
+
+const HELL = {
+  idle: 8,
+  walk: 8,
+  run: 8,
+  attack_1: 8,
+  attack_2: 8,
+  hurt: 4,
+  die: 8
+};
+
+class Game extends P.Scene {
+  constructor() {
+    super("Game");
+  }
+
+  preload() {
+    for (const a of ACTIONS) {
+      for (const d of DIRS) {
+        const k = `hero_${a}_${d}`;
+        this.load.spritesheet(
+          k, `assets/${k}.png`,
+          { frameWidth: 256, frameHeight: 288 }
+        );
+      }
+    }
+
+    for (const a in HELL) {
+      this.load.spritesheet(
+        `hellhound_${a}`,
+        `assets/hellhound_${a}.png`,
+        { frameWidth: 176, frameHeight: 146 }
+      );
+    }
+
+    for (const t of ["slime", "boar"]) {
+      for (let i = 0; i < 4; i++) {
+        this.load.image(
+          `${t}_${i}`,
+          `assets/${t}_${i}.png`
+        );
+      }
+    }
+
+    for (const t of [
+      "grass", "water", "tree",
+      "bush", "rock", "flower", "stump"
+    ]) {
+      this.load.image(t, `assets/${t}.png`);
+    }
+
+    this.load.on("loaderror", f => {
+      console.warn("Missing:", f.key);
+    });
+  }
+
+  create() {
+    this.physics.world.setBounds(
+      0, 0, WORLD.w, WORLD.h
+    );
+
+    this.makeTextures();
+    this.makeAnimations();
+    this.loadSave();
+
+    this.enemies = [];
+    this.drops = [];
+    this.blocks = [];
+    this.npcs = [];
+    this.boss = null;
+
+    this.walls = this.physics.add.staticGroup();
+
+    this.buildMap();
+    this.buildVillage();
+
+    const heroKey = this.textures.exists(
+      "hero_idle_down"
+    ) ? "hero_idle_down" : "fallback_hero";
+
+    this.hero = this.physics.add.sprite(
+      HOME.x, HOME.y + 95, heroKey
+    ).setOrigin(0.5, 1);
+
+    this.hero.setDisplaySize(96, 108);
+    this.hero.setCollideWorldBounds(true);
+    this.hero.body.setSize(
+      this.hero.width * 0.36,
+      this.hero.height * 0.12
+    );
+    this.hero.body.setOffset(
+      this.hero.width * 0.32,
+      this.hero.height * 0.85
+    );
+
+    this.physics.add.collider(
+      this.hero, this.walls
+    );
+
+    this.shadow = this.add.ellipse(
+      this.hero.x, this.hero.y,
+      48, 13, 0x102a20, 0.4
+    );
+
+    this.dir = "down";
+    this.heroAction = "";
+    this.combo = 0;
+    this.comboExpire = 0;
+    this.attacking = false;
+    this.attackAt = 0;
+    this.attackEnd = 0;
+    this.hitDone = false;
+    this.lastAttack = -9999;
+    this.lastSkill = -9999;
+    this.lastHurt = -9999;
+    this.lastSpawn = 0;
+    this.lastSave = 0;
+
+    this.stick = { x: 0, y: 0 };
+    this.joyPointer = null;
+    this.attackPointer = null;
+    this.attackHeld = false;
+    this.panelMode = "";
+
+    this.cameras.main
+      .setBounds(0, 0, WORLD.w, WORLD.h)
+      .startFollow(this.hero, true, 0.12, 0.12)
+      .setRoundPixels(true);
+
+    this.makeUI();
+    this.bindInput();
+    this.layout();
+
+    this.scale.on("resize", this.layout, this);
+
+    for (let i = 0; i < 14; i++) {
+      this.spawnEnemy();
+    }
+
+    this.playHero("idle", "down");
+    this.notice("GREENHAVEN - คุยกับ ELDER เพื่อรับเควสต์");
+  }
+
+  loadSave() {
+    let s = {};
+
+    try {
+      s = JSON.parse(
+        localStorage.getItem(SAVE) || "{}"
+      );
+    } catch {}
+
+    this.level = s.level || 1;
+    this.exp = s.exp || 0;
+    this.gold = s.gold ?? 100;
+    this.gems = s.gems || 0;
+    this.kills = s.kills || 0;
+    this.sword = s.sword || 0;
+    this.armor = s.armor || 0;
+    this.potions = s.potions ?? 3;
+    this.quest = s.quest || {
+      accepted: false,
+      kills: 0,
+      claimed: false
+    };
+    this.bossWins = s.bossWins || 0;
+    this.maxHp = 100 + this.armor * 25;
+    this.hp = this.maxHp;
+  }
+
+  saveGame() {
+    try {
+      localStorage.setItem(
+        SAVE,
+        JSON.stringify({
+          level: this.level,
+          exp: this.exp,
+          gold: this.gold,
+          gems: this.gems,
+          kills: this.kills,
+          sword: this.sword,
+          armor: this.armor,
+          potions: this.potions,
+          quest: this.quest,
+          bossWins: this.bossWins
+        })
+      );
+    } catch (e) {
+      console.warn("Save unavailable", e);
+    }
+  }
+
+  makeTextures() {
+    const g = this.make.graphics({ x: 0, y: 0 });
+
+    const save = (key, w, h) => {
+      g.generateTexture(key, w, h);
+      g.clear();
+    };
+
+    g.fillStyle(0xffffff);
+    g.fillRect(0, 0, 2, 2);
+    save("blank", 2, 2);
+
+    for (const [name, color] of [
+      ["grass", 0x478b52],
+      ["water", 0x2889b4],
+      ["tree", 0x337d45],
+      ["bush", 0x55a35a],
+      ["rock", 0x858e92],
+      ["flower", 0xf4c95c],
+      ["stump", 0x80512f]
+    ]) {
+      g.fillStyle(color);
+      g.fillRect(0, 0, 64, 64);
+      save(`fallback_${name}`, 64, 64);
+    }
+
+    for (const [type, color] of [
+      ["slime", 0x4ed36d],
+      ["boar", 0x986444]
+    ]) {
+      for (let i = 0; i < 4; i++) {
+        g.fillStyle(color);
+        g.fillEllipse(32, 35 + i % 2, 54, 40);
+        g.fillStyle(0x202020);
+        g.fillRect(21, 28, 5, 6);
+        g.fillRect(40, 28, 5, 6);
+        save(`fallback_${type}_${i}`, 64, 64);
+      }
+    }
+
+    g.fillStyle(0x28252d);
+    g.fillEllipse(82, 96, 105, 62);
+    g.fillEllipse(125, 70, 65, 57);
+    g.fillStyle(0xff7528);
+    g.fillRect(126, 63, 10, 7);
+    g.fillRect(45, 119, 16, 9);
+    g.fillRect(112, 119, 16, 9);
+    save("fallback_hell", 176, 146);
+
+    g.fillStyle(0x283a56);
+    g.fillRect(22, 39, 36, 52);
+    g.fillStyle(0xf0bb91);
+    g.fillRect(26, 15, 28, 28);
+    g.fillStyle(0x342522);
+    g.fillRect(23, 8, 34, 13);
+    g.fillStyle(0x283047);
+    g.fillRect(25, 90, 12, 24);
+    g.fillRect(43, 90, 12, 24);
+    g.fillStyle(0xffdf80);
+    g.fillRect(63, 35, 5, 70);
+    save("fallback_hero", 80, 120);
+
+    for (let i = 0; i < 3; i++) {
+      g.fillStyle([
+        0x4b9a68, 0x956748, 0x5279b0
+      ][i]);
+      g.fillRect(16, 42, 36, 50);
+      g.fillStyle(0xf0c092);
+      g.fillRect(21, 17, 26, 28);
+      g.fillStyle(0x392c2a);
+      g.fillRect(18, 8, 32, 13);
+      g.fillStyle(0x26344b);
+      g.fillRect(19, 92, 12, 23);
+      g.fillRect(38, 92, 12, 23);
+      save(`npc_${i}`, 68, 120);
+    }
+
+    for (let i = 0; i < 3; i++) {
+      g.fillStyle(0x3a2d29);
+      g.fillRect(10, 72, 210, 112);
+      g.fillStyle(0xd1b58b);
+      g.fillRect(15, 77, 200, 102);
+
+      g.fillStyle([
+        0xa54c3a, 0x5276a4, 0x896642
+      ][i]);
+
+      g.fillPoints([
+        { x: 0, y: 78 },
+        { x: 115, y: 5 },
+        { x: 230, y: 78 }
+      ], true);
+
+      g.fillStyle(0x52382a);
+      g.fillRect(96, 126, 39, 53);
+      g.fillStyle(0x46768c);
+      g.fillRect(39, 111, 35, 32);
+      g.fillRect(158, 111, 35, 32);
+
+      save(`house_${i}`, 230, 190);
+    }
+
+    g.fillStyle(0xffd45c);
+    g.fillCircle(12, 12, 10);
+    save("coin", 24, 24);
+
+    g.fillStyle(0x61d9ff);
+    g.fillPoints([
+      { x: 12, y: 0 },
+      { x: 23, y: 12 },
+      { x: 12, y: 24 },
+      { x: 1, y: 12 }
+    ], true);
+    save("gem", 24, 24);
+
+    g.destroy();
+  }
+
+  tex(name) {
+    return this.textures.exists(name)
+      ? name
+      : `fallback_${name}`;
+  }
+
+  makeAnimations() {
+    for (const a of ACTIONS) {
+      for (const d of DIRS) {
+        const k = `hero_${a}_${d}`;
+        if (!this.textures.exists(k)) continue;
+
+        this.anims.create({
+          key: `h_${a}_${d}`,
+          frames: this.anims.generateFrameNumbers(
+            k, { start: 0, end: 7 }
+          ),
+          frameRate: a === "attack" ? 16 :
+            a === "walk" ? 11 : 5,
+          repeat: a === "attack" ? 0 : -1
+        });
+      }
+    }
+
+    for (const [a, n] of Object.entries(HELL)) {
+      const k = `hellhound_${a}`;
+      if (!this.textures.exists(k)) continue;
+
+      this.anims.create({
+        key: `e_${a}`,
+        frames: this.anims.generateFrameNumbers(
+          k, { start: 0, end: n - 1 }
+        ),
+        frameRate: a === "idle" ? 5 : 12,
+        repeat: ["idle", "walk", "run"].includes(a)
+          ? -1 : 0
+      });
+    }
+  }
+
+  playHero(a, d, force = false) {
+    const key = `h_${a}_${d}`;
+
+    if (
+      !force &&
+      this.heroAction === key &&
+      this.hero.anims.isPlaying
+    ) return;
+
+    this.heroAction = key;
+    this.dir = d;
+
+    if (this.anims.exists(key)) {
+      this.hero.play(key, true);
+    } else {
+      this.hero.setTexture("fallback_hero");
+    }
+  }
+
+  playEnemy(m, a, force = false) {
+    const key = `e_${a}`;
+
+    if (
+      m.type !== "hellhound" ||
+      !this.anims.exists(key)
+    ) return;
+
+    if (
+      !force &&
+      m.anim === a &&
+      m.s.anims.isPlaying
+    ) return;
+
+    m.anim = a;
+    m.s.play(key, true);
+  }
+
+  block(x, y, w, h) {
+    this.blocks.push({ x, y, w, h });
+
+    const b = this.walls.create(x, y, "blank");
+    b.setDisplaySize(w, h);
+    b.refreshBody();
+    b.setVisible(false);
+  }
+
+  walkable(x, y, r = 20) {
+    if (
+      x < r || y < r ||
+      x > WORLD.w - r ||
+      y > WORLD.h - r
+    ) return false;
+
+    return !this.blocks.some(b =>
+      Math.abs(x - b.x) < b.w / 2 + r &&
+      Math.abs(y - b.y) < b.h / 2 + r
+    );
+  }
+
+  safe(x, y, extra = 0) {
+    return Math.hypot(
+      x - HOME.x,
+      y - HOME.y
+    ) < HOME.r + extra;
+  }
+
+  buildMap() {
+    this.add.tileSprite(
+      WORLD.w / 2,
+      WORLD.h / 2,
+      WORLD.w,
+      WORLD.h,
+      this.tex("grass")
+    ).setDepth(-10000);
+
+    this.add.tileSprite(
+      1640, 300, 300, 600,
+      this.tex("water")
+    ).setDepth(-9998);
+
+    this.block(1640, 100, 300, 200);
+    this.block(1640, 480, 300, 240);
+
+    const bridge = this.add.graphics()
+      .setDepth(-9997);
+
+    bridge.fillStyle(0x775237);
+    bridge.fillRect(1450, 200, 400, 120);
+
+    for (let x = 1455; x < 1840; x += 28) {
+      bridge.lineStyle(3, 0x30241e);
+      bridge.lineBetween(x, 200, x, 320);
+    }
+
+    const placed = [];
+
+    for (let i = 0; i < 180; i++) {
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const x = P.Math.Between(75, WORLD.w - 75);
+        const y = P.Math.Between(70, WORLD.h - 70);
+
+        if (this.safe(x, y, 120)) continue;
+
+        if (
+          x > 1450 && x < 1850 &&
+          y < 610
+        ) continue;
+
+        if (!this.walkable(x, y, 60)) continue;
+
+        if (placed.some(p =>
+          Math.hypot(x - p.x, y - p.y) < 85
+        )) continue;
+
+        const r = Math.random();
+
+        const type = r < 0.36 ? "tree" :
+          r < 0.58 ? "bush" :
+          r < 0.75 ? "rock" :
+          r < 0.91 ? "flower" : "stump";
+
+        const img = this.add.image(
+          x, y, this.tex(type)
+        ).setOrigin(0.5, 1);
+
+        const heights = {
+          tree: 150,
+          bush: 65,
+          rock: 58,
+          flower: 28,
+          stump: 48
+        };
+
+        img.setScale(heights[type] / img.height);
+        img.setDepth(y);
+
+        if (["tree", "rock", "stump"].includes(type)) {
+          this.block(
+            x, y - 12,
+            type === "tree" ? 40 : 34,
+            25
+          );
+        }
+
+        placed.push({ x, y });
+        break;
+      }
+    }
+  }
+
+  buildVillage() {
+    const g = this.add.graphics().setDepth(-100);
+
+    g.fillStyle(0x7aaf67);
+    g.fillEllipse(
+      HOME.x, HOME.y, 690, 600
+    );
+
+    g.lineStyle(7, 0xd4b17d);
+    g.strokeEllipse(
+      HOME.x, HOME.y, 690, 600
+    );
+
+    g.fillStyle(0xc9ac7f);
+    g.fillEllipse(
+      HOME.x, HOME.y + 35, 430, 230
+    );
+    g.fillRect(HOME.x - 35, HOME.y + 40, 70, 390);
+
+    g.fillStyle(0x5e6d72);
+    g.fillEllipse(HOME.x, HOME.y - 20, 94, 48);
+
+    g.fillStyle(0x4396ba);
+    g.fillEllipse(HOME.x, HOME.y - 22, 65, 27);
+
+    const houses = [
+      [760, 610, 0, "SHOP"],
+      [1240, 610, 1, "FORGE"],
+      [1000, 470, 2, "HALL"]
+    ];
+
+    for (const [x, y, id, name] of houses) {
+      this.add.image(
+        x, y, `house_${id}`
+      ).setOrigin(0.5, 1)
+        .setScale(0.95)
+        .setDepth(y);
+
+      this.block(x, y - 32, 160, 48);
+
+      this.add.text(x, y - 194, name, {
+        fontFamily: "monospace",
+        fontSize: "17px",
+        color: "#ffe6a1",
+        stroke: "#2a211b",
+        strokeThickness: 4
+      }).setOrigin(0.5).setDepth(y + 1);
+    }
+
+    this.addNPC(0, 785, 775, "MIRA", "ร้านค้า");
+    this.addNPC(1, 1215, 775, "BRON", "ช่างตีเหล็ก");
+    this.addNPC(2, 1000, 930, "ELDER", "เควสต์");
+
+    this.add.text(
+      HOME.x, HOME.y + 290,
+      "GREENHAVEN - SAFE ZONE",
+      {
+        fontFamily: "monospace",
+        fontSize: "21px",
+        color: "#fff2bb",
+        stroke: "#173a26",
+        strokeThickness: 5
+      }
+    ).setOrigin(0.5).setDepth(1100);
+  }
+
+  addNPC(id, x, y, name, role) {
+    const sprite = this.add.image(
+      x, y, `npc_${id}`
+    ).setOrigin(0.5, 1)
+      .setDisplaySize(61, 108)
+      .setDepth(y)
+      .setInteractive();
+
+    this.add.text(
+      x, y - 125,
+      `${name}\n${role}`,
+      {
+        fontFamily: "system-ui",
+        fontSize: "15px",
+        align: "center",
+        color: "#ffe9b1",
+        stroke: "#162b1d",
+        strokeThickness: 4
+      }
+    ).setOrigin(0.5).setDepth(y + 1);
+
+    const npc = { id, x, y, name, role };
+    this.npcs.push(npc);
+
+    sprite.on("pointerdown", () => {
+      this.talk(npc);
+    });
+  }
+
+  nearestNPC() {
+    let best = null;
+    let distance = 145;
+
+    for (const npc of this.npcs) {
+      const d = Math.hypot(
+        this.hero.x - npc.x,
+        this.hero.y - npc.y
+      );
+
+      if (d < distance) {
+        best = npc;
+        distance = d;
+      }
+    }
+
+    return best;
+  }
+
+  talk(npc) {
+    if (
+      Math.hypot(
+        this.hero.x - npc.x,
+        this.hero.y - npc.y
+      ) > 150
+    ) {
+      this.notice("เดินเข้าใกล้ NPC ก่อน");
+      return;
+    }
+
+    if (npc.id === 0) this.openPanel("shop");
+    if (npc.id === 1) this.openPanel("forge");
+    if (npc.id === 2) this.openPanel("quest");
+  }
+
+  makeUI() {
+    const fixed = obj =>
+      obj.setScrollFactor(0).setDepth(20000);
+
+    this.hud = fixed(this.add.graphics());
+
+    this.hudText = fixed(this.add.text(
+      15, 14, "",
+      {
+        fontFamily: "system-ui",
+        fontSize: "14px",
+        color: "#ffffff",
+        fontStyle: "bold"
+      }
+    ));
+
+    this.noticeText = fixed(this.add.text(
+      0, 150, "",
+      {
+        fontFamily: "system-ui",
+        fontSize: "16px",
+        color: "#ffffff",
+        backgroundColor: "#182d3ee8",
+        padding: { x: 12, y: 8 },
+        align: "center"
+      }
+    ).setOrigin(0.5)).setVisible(false);
+
+    this.joyBase = fixed(this.add.circle(
+      90, 0, 61, 0x163349, 0.72
+    ).setStrokeStyle(3, 0xb6d9ec));
+
+    this.joyKnob = fixed(this.add.circle(
+      90, 0, 26, 0xa8d8f1
+    ));
+
+    this.attackBtn = fixed(this.add.circle(
+      0, 0, 48, 0xa83d2d
+    ).setStrokeStyle(4, 0xffc569));
+
+    this.attackLabel = fixed(this.add.text(
+      0, 0, "⚔",
+      { fontSize: "32px" }
+    ).setOrigin(0.5));
+
+    this.skillBtn = fixed(this.add.circle(
+      0, 0, 35, 0x30518b
+    ).setStrokeStyle(3, 0xe3d36e));
+
+    this.skillLabel = fixed(this.add.text(
+      0, 0, "✦",
+      {
+        fontSize: "28px",
+        color: "#ffffff"
+      }
+    ).setOrigin(0.5));
+
+    this.talkBtn = fixed(this.add.text(
+      0, 0, "💬 คุย",
+      {
+        fontSize: "16px",
+        color: "#ffffff",
+        backgroundColor: "#346e50",
+        padding: { x: 12, y: 10 }
+      }
+    ).setOrigin(0.5).setInteractive());
+
+    this.talkBtn.on("pointerdown", () => {
+      if (this.panelMode) return;
+
+      const npc = this.nearestNPC();
+      if (npc) this.talk(npc);
+      else this.notice("ไม่มี NPC อยู่ใกล้");
+    });
+
+    this.bagBtn = fixed(this.add.text(
+      0, 0, "🎒 BAG",
+      {
+        fontSize: "15px",
+        color: "#ffffff",
+        backgroundColor: "#394f72",
+        padding: { x: 10, y: 8 }
+      }
+    ).setOrigin(0.5).setInteractive());
+
+    this.bagBtn.on("pointerdown", () => {
+      this.openPanel("bag");
+    });
+
+    this.potionBtn = fixed(this.add.text(
+      0, 0, "🧪",
+      {
+        fontSize: "16px",
+        color: "#ffffff",
+        backgroundColor: "#794577",
+        padding: { x: 12, y: 8 }
+      }
+    ).setOrigin(0.5).setInteractive());
+
+    this.potionBtn.on("pointerdown", () => {
+      if (!this.panelMode) this.usePotion();
+    });
+
+    this.bossBar = fixed(this.add.graphics());
+
+    this.bossLabel = fixed(this.add.text(
+      0, 91, "HELLHOUND ALPHA",
+      {
+        fontFamily: "monospace",
+        fontSize: "18px",
+        fontStyle: "bold",
+        color: "#ffbc74",
+        stroke: "#24191b",
+        strokeThickness: 4
+      }
+    ).setOrigin(0.5)).setVisible(false);
+
+    this.panel = fixed(this.add.container(0, 0));
+    this.panel.setVisible(false);
+
+    this.panelBg = this.add.graphics();
+    this.panel.add(this.panelBg);
+
+    this.panelTitle = this.add.text(
+      0, 0, "",
+      {
+        fontFamily: "system-ui",
+        fontSize: "24px",
+        fontStyle: "bold",
+        color: "#ffe09a"
+      }
+    ).setOrigin(0.5);
+
+    this.panel.add(this.panelTitle);
+
+    this.panelInfo = this.add.text(
+      0, 0, "",
+      {
+        fontFamily: "system-ui",
+        fontSize: "15px",
+        color: "#ffffff",
+        align: "center",
+        wordWrap: { width: 285 }
+      }
+    ).setOrigin(0.5);
+
+    this.panel.add(this.panelInfo);
+
+    this.options = [];
+
+    for (let i = 0; i < 4; i++) {
+      const btn = this.add.text(
+        0, 0, "",
+        {
+          fontFamily: "system-ui",
+          fontSize: "15px",
+          color: "#ffffff",
+          backgroundColor: "#345f50",
+          padding: { x: 12, y: 10 },
+          align: "center"
+        }
+      ).setOrigin(0.5).setInteractive();
+
+      btn.on("pointerdown", () => {
+        this.panelAction(i);
+      });
+
+      this.options.push(btn);
+      this.panel.add(btn);
+    }
+
+    this.closeBtn = this.add.text(
+      0, 0, "✕ ปิด",
+      {
+        fontSize: "17px",
+        color: "#ffffff",
+        backgroundColor: "#98484b",
+        padding: { x: 18, y: 10 }
+      }
+    ).setOrigin(0.5).setInteractive();
+
+    this.closeBtn.on("pointerdown", () => {
+      this.closePanel();
+    });
+
+    this.panel.add(this.closeBtn);
+  }
+
+  layout() {
+    const w = this.scale.width;
+    const h = this.scale.height;
+
+    const jx = w < 450 ? 85 : 105;
+    const ax = w - (w < 450 ? 80 : 105);
+    const by = h - 105;
+
+    this.joyBase.setPosition(jx, by);
+    this.joyKnob.setPosition(jx, by);
+    this.attackBtn.setPosition(ax, by);
+    this.attackLabel.setPosition(ax, by);
+
+    this.skillBtn.setPosition(ax - 28, by - 103);
+    this.skillLabel.setPosition(ax - 28, by - 103);
+
+    this.talkBtn.setPosition(w / 2, h - 75);
+    this.bagBtn.setPosition(w - 68, 150);
+    this.potionBtn.setPosition(ax, by - 185);
+
+    this.noticeText.setPosition(w / 2, 175);
+    this.bossLabel.setPosition(w / 2, 91);
+
+    const pw = Math.min(w - 24, 380);
+    const ph = Math.min(h - 24, 470);
+    const cx = w / 2;
+    const cy = h / 2;
+
+    this.panelBg.clear();
+    this.panelBg.fillStyle(0x111e2e, 0.97);
+    this.panelBg.fillRoundedRect(
+      cx - pw / 2,
+      cy - ph / 2,
+      pw, ph, 12
+    );
+
+    this.panelBg.lineStyle(3, 0xe1b96d);
+    this.panelBg.strokeRoundedRect(
+      cx - pw / 2,
+      cy - ph / 2,
+      pw, ph, 12
+    );
+
+    this.panelTitle.setPosition(
+      cx, cy - ph / 2 + 36
+    );
+
+    this.panelInfo.setPosition(
+      cx, cy - ph / 2 + 100
+    );
+
+    this.options.forEach((b, i) => {
+      b.setPosition(
+        cx,
+        cy - 48 + i * 58
+      );
+    });
+
+    this.closeBtn.setPosition(
+      cx, cy + ph / 2 - 34
+    );
+  }
+
+  bindInput() {
+    this.keys = this.input.keyboard.addKeys(
+      "W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,E,Q,I,F"
+    );
+
+    this.input.addPointer(2);
+
+    this.input.on("pointerdown", p => {
+      if (this.panelMode) return;
+
+      const w = this.scale.width;
+      const h = this.scale.height;
+
+      if (
+        p.x < w * 0.47 &&
+        p.y > h * 0.45 &&
+        this.joyPointer === null
+      ) {
+        this.joyPointer = p.id;
+        this.moveStick(p);
+        return;
+      }
+
+      if (
+        Math.hypot(
+          p.x - this.skillBtn.x,
+          p.y - this.skillBtn.y
+        ) < 44
+      ) {
+        this.skill();
+        return;
+      }
+
+      if (
+        Math.hypot(
+          p.x - this.attackBtn.x,
+          p.y - this.attackBtn.y
+        ) < 65
+      ) {
+        this.attackPointer = p.id;
+        this.attackHeld = true;
+        this.attack();
+      }
+    });
+
+    this.input.on("pointermove", p => {
+      if (p.id === this.joyPointer) {
+        this.moveStick(p);
+      }
+    });
+
+    const release = p => {
+      if (p.id === this.joyPointer) {
+        this.joyPointer = null;
+        this.stick = { x: 0, y: 0 };
+        this.joyKnob.setPosition(
+          this.joyBase.x, this.joyBase.y
+        );
+      }
+
+      if (p.id === this.attackPointer) {
+        this.attackPointer = null;
+        this.attackHeld = false;
+      }
+    };
+
+    this.input.on("pointerup", release);
+    this.input.on("pointerupoutside", release);
+
+    this.keys.E.on("down", () => {
+      if (this.panelMode) return;
+      const npc = this.nearestNPC();
+      if (npc) this.talk(npc);
+    });
+
+    this.keys.Q.on("down", () => {
+      if (!this.panelMode) this.usePotion();
+    });
+
+    this.keys.I.on("down", () => {
+      if (this.panelMode) this.closePanel();
+      else this.openPanel("bag");
+    });
+
+    this.keys.F.on("down", () => {
+      if (!this.panelMode) this.skill();
+    });
+  }
+
+  moveStick(p) {
+    const dx = p.x - this.joyBase.x;
+    const dy = p.y - this.joyBase.y;
+    const len = Math.hypot(dx, dy);
+    const power = Math.min(1, len / 55);
+
+    this.stick = len ? {
+      x: dx / len * power,
+      y: dy / len * power
+    } : { x: 0, y: 0 };
+
+    this.joyKnob.setPosition(
+      this.joyBase.x + this.stick.x * 43,
+      this.joyBase.y + this.stick.y * 43
+    );
+  }
+
+  openPanel(mode) {
+    this.panelMode = mode;
+    this.attackHeld = false;
+    this.stick = { x: 0, y: 0 };
+    this.joyPointer = null;
+
+    this.joyKnob.setPosition(
+      this.joyBase.x, this.joyBase.y
+    );
+
+    this.hero.setVelocity(0, 0);
+    this.panel.setVisible(true);
+    this.refreshPanel();
+  }
+
+  closePanel() {
+    this.panelMode = "";
+    this.panel.setVisible(false);
+    this.attackHeld = false;
+  }
+
+  refreshPanel() {
+    const mode = this.panelMode;
+    let title = "";
+    let info = "";
+    let buttons = [];
+
+    if (mode === "shop") {
+      title = "MIRA'S SHOP";
+      info = `Gold: ${this.gold}`;
+
+      buttons = [
+        "🧪 ยาฟื้น HP +50 - 20 Gold",
+        "🧪 ยา 3 ขวด - 50 Gold",
+        "❤️ ฟื้น HP เต็ม - 15 Gold"
+      ];
+    }
+
+    if (mode === "forge") {
+      title = "BRON'S FORGE";
+      info = `Gold: ${this.gold}\n` +
+        `Sword Lv.${this.sword} | Armor Lv.${this.armor}`;
+
+      buttons = [
+        `⚔ อัปเกรดดาบ - ${60 * (this.sword + 1)} Gold`,
+        `🛡 อัปเกรดเกราะ - ${50 * (this.armor + 1)} Gold`,
+        "🔧 ฟื้น HP เต็ม - 10 Gold"
+      ];
+    }
+
+    if (mode === "quest") {
+      title = "ELDER - QUEST";
+
+      if (!this.quest.accepted) {
+        info = "ภารกิจ: กำจัด Hellhound 5 ตัว";
+        buttons = ["รับภารกิจ"];
+      } else if (!this.quest.claimed) {
+        info = `กำจัด Hellhound ${Math.min(
+          this.quest.kills, 5
+        )}/5\nรางวัล: 300 Gold + 200 EXP`;
+
+        buttons = this.quest.kills >= 5
+          ? ["รับรางวัล"]
+          : ["กำลังทำภารกิจ"];
+      } else {
+        info = "ทำภารกิจสำเร็จแล้ว!\nมีบอสอยู่ในป่า";
+        buttons = ["เรียก Hellhound Alpha"];
+      }
+    }
+
+    if (mode === "bag") {
+      title = "INVENTORY";
+
+      info =
+        `LEVEL ${this.level}\n` +
+        `HP ${this.hp}/${this.maxHp}\n` +
+        `ATK ${18 + this.sword * 8}\n` +
+        `ARMOR Lv.${this.armor}\n` +
+        `SWORD Lv.${this.sword}\n` +
+        `GOLD ${this.gold} | GEMS ${this.gems}\n` +
+        `POTIONS ${this.potions}\n` +
+        `BOSS WINS ${this.bossWins}`;
+
+      buttons = ["🧪 ใช้ยาฟื้น HP"];
+    }
+
+    this.panelTitle.setText(title);
+    this.panelInfo.setText(info);
+
+    this.options.forEach((b, i) => {
+      b.setVisible(i < buttons.length);
+      b.setText(buttons[i] || "");
+    });
+  }
+
+  panelAction(i) {
+    const mode = this.panelMode;
+
+    if (mode === "bag") {
+      if (i === 0) this.usePotion();
+      this.refreshPanel();
+      return;
+    }
+
+    if (mode === "quest") {
+      if (!this.quest.accepted) {
+        this.quest.accepted = true;
+        this.notice("รับเควสต์แล้ว!");
+      } else if (
+        !this.quest.claimed &&
+        this.quest.kills >= 5
+      ) {
+        this.quest.claimed = true;
+        this.gold += 300;
+        this.gainExp(200);
+        this.notice("QUEST COMPLETE!");
+      } else if (this.quest.claimed) {
+        this.spawnBoss();
+        this.closePanel();
+        return;
+      }
+
+      this.saveGame();
+      this.refreshPanel();
+      return;
+    }
+
+    let cost = 0;
+
+    if (mode === "shop") {
+      cost = [20, 50, 15][i];
+    } else if (mode === "forge") {
+      cost = [
+        60 * (this.sword + 1),
+        50 * (this.armor + 1),
+        10
+      ][i];
+    }
+
+    if (cost === undefined) return;
+
+    if (this.gold < cost) {
+      this.notice("Gold ไม่เพียงพอ");
+      return;
+    }
+
+    if (
+      mode === "forge" &&
+      ((i === 0 && this.sword >= 10) ||
+       (i === 1 && this.armor >= 10))
+    ) {
+      this.notice("อัปเกรดสูงสุดแล้ว");
+      return;
+    }
+
+    this.gold -= cost;
+
+    if (mode === "shop") {
+      if (i === 0) this.potions++;
+      if (i === 1) this.potions += 3;
+      if (i === 2) this.hp = this.maxHp;
+    } else {
+      if (i === 0) this.sword++;
+
+      if (i === 1) {
+        this.armor++;
+        this.maxHp += 25;
+        this.hp += 25;
+      }
+
+      if (i === 2) this.hp = this.maxHp;
+    }
+
+    this.saveGame();
+    this.refreshPanel();
+    this.notice("สำเร็จ!");
+  }
+
+  usePotion() {
+    if (this.potions <= 0) {
+      this.notice("ไม่มียา");
+      return;
+    }
+
+    if (this.hp >= this.maxHp) {
+      this.notice("HP เต็มแล้ว");
+      return;
+    }
+
+    this.potions--;
+    this.hp = Math.min(this.maxHp, this.hp + 50);
+    this.saveGame();
+    this.notice("ฟื้น HP +50");
+  }
+
+  notice(text) {
+    this.noticeText.setText(text);
+    this.noticeText.setVisible(true);
+    this.noticeText.setAlpha(1);
+
+    this.tweens.killTweensOf(this.noticeText);
+
+    this.tweens.add({
+      targets: this.noticeText,
+      alpha: 0,
+      delay: 1300,
+      duration: 350,
+      onComplete: () => {
+        this.noticeText.setVisible(false);
+      }
+    });
+  }
+
+  spawnEnemy(isBoss = false) {
+    let x, y;
+    let found = false;
+
+    for (let i = 0; i < 60; i++) {
+      x = P.Math.Between(70, WORLD.w - 70);
+      y = P.Math.Between(70, WORLD.h - 70);
+
+      if (this.safe(x, y, isBoss ? 200 : 100))
+        continue;
+
+      if (!this.walkable(x, y, isBoss ? 85 : 35))
+        continue;
+
+      if (
+        Math.hypot(
+          x - this.hero.x,
+          y - this.hero.y
+        ) < 250
+      ) continue;
+
+      found = true;
+      break;
+    }
+
+    if (!found) return null;
+
+    const roll = Math.random();
+
+    const type = isBoss || roll < 0.35
+      ? "hellhound"
+      : roll < 0.8 ? "slime" : "boar";
+
+    const texture = type === "hellhound"
+      ? (
+        this.textures.exists("hellhound_idle")
+          ? "hellhound_idle"
+          : "fallback_hell"
+      )
+      : this.tex(`${type}_0`);
+
+    const s = this.physics.add.sprite(
+      x, y, texture
+    ).setOrigin(0.5, 1);
+
+    const height = isBoss ? 210 :
+      type === "hellhound" ? 100 :
+      type === "boar" ? 90 : 76;
+
+    s.setDisplaySize(
+      s.width * height / s.height,
+      height
+    );
+
+    s.setCollideWorldBounds(true);
+
+    s.body.setSize(
+      s.width * 0.48,
+      s.height * 0.16
+    );
+
+    s.body.setOffset(
+      s.width * 0.26,
+      s.height * 0.80
+    );
+
+    this.physics.add.collider(s, this.walls);
+
+    const hp = isBoss ? 2200 :
+      type === "hellhound" ? 125 :
+      type === "boar" ? 85 : 45;
+
+    const m = {
+      type,
+      boss: isBoss,
+      s,
+      hp,
+      maxHp: hp,
+      speed: isBoss ? 72 :
+        type === "hellhound" ? 125 : 85,
+      dead: false,
+      state: "idle",
+      anim: "",
+      lastAttack: 0,
+      attackAt: 0,
+      attackEnd: 0,
+      attackDone: false,
+      attackCount: 0,
+      stun: 0,
+      knockX: 0,
+      knockY: 0,
+      steerX: 0,
+      steerY: 0,
+      nextAI: 0,
+      frame: 0,
+      lastFrame: 0,
+      shadow: this.add.ellipse(
+        x, y, isBoss ? 100 : 45,
+        13, 0x10251b, 0.4
+      ),
+      bar: this.add.graphics()
+    };
+
+    this.enemies.push(m);
+
+    if (type === "hellhound") {
+      this.playEnemy(m, "idle");
+    }
+
+    return m;
+  }
+
+  spawnBoss() {
+    if (this.boss && !this.boss.dead) {
+      this.notice("บอสยังอยู่ในแผนที่");
+      return;
+    }
+
+    this.boss = this.spawnEnemy(true);
+
+    if (this.boss) {
+      this.notice("HELLHOUND ALPHA ปรากฏตัว!");
+      this.cameras.main.shake(180, 0.004);
+    }
+  }
+
+  gainExp(amount) {
+    this.exp += amount;
+
+    while (this.exp >= this.level * 50) {
+      this.exp -= this.level * 50;
+      this.level++;
+      this.hp = Math.min(
+        this.maxHp, this.hp + 30
+      );
+      this.notice(`LEVEL UP! Lv.${this.level}`);
+    }
+  }
+
+  floatText(x, y, text, color) {
+    const t = this.add.text(
+      x, y, text,
+      {
+        fontFamily: "system-ui",
+        fontSize: "23px",
+        fontStyle: "bold",
+        color,
+        stroke: "#241a18",
+        strokeThickness: 5
+      }
+    ).setOrigin(0.5).setDepth(15000);
+
+    this.tweens.add({
+      targets: t,
+      y: y - 54,
+      alpha: 0,
+      duration: 650,
+      onComplete: () => t.destroy()
+    });
+  }
+
+  sparks(x, y, color, count) {
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const distance = P.Math.Between(24, 75);
+
+      const p = this.add.circle(
+        x, y, P.Math.Between(2, 5), color
+      ).setDepth(15000);
+
+      this.tweens.add({
+        targets: p,
+        x: x + Math.cos(angle) * distance,
+        y: y + Math.sin(angle) * distance,
+        alpha: 0,
+        duration: P.Math.Between(170, 380),
+        onComplete: () => p.destroy()
+      });
+    }
+  }
+
+  hitEnemy(m, damage, dx, dy) {
+    if (m.dead) return;
+
+    m.hp -= damage;
+    m.stun = this.time.now + 180;
+    m.knockX = dx * (m.boss ? 100 : 260);
+    m.knockY = dy * (m.boss ? 100 : 260);
+
+    m.s.setTintFill(0xffffff);
+
+    this.floatText(
+      m.s.x,
+      m.s.y - m.s.displayHeight - 12,
+      `-${damage}`,
+      damage >= 45 ? "#ffcf69" : "#ffffff"
+    );
+
+    this.sparks(
+      m.s.x, m.s.y - 35,
+      0xffc04a, 8
+    );
+
+    if (m.hp <= 0) {
+      this.killEnemy(m);
+    } else if (m.type === "hellhound") {
+      this.playEnemy(m, "hurt", true);
+    }
+  }
+
+  killEnemy(m) {
+    if (m.dead) return;
+
+    m.dead = true;
+    m.state = "dead";
+    m.s.setVelocity(0, 0);
+    m.s.body.enable = false;
+    m.bar.clear();
+
+    this.kills++;
+
+    this.gainExp(
+      m.boss ? 500 :
+      m.type === "hellhound" ? 35 : 15
+    );
+
+    if (
+      m.type === "hellhound" &&
+      !m.boss &&
+      this.quest.accepted &&
+      !this.quest.claimed
+    ) {
+      this.quest.kills++;
+    }
+
+    if (m.boss) {
+      this.bossWins++;
+      this.gold += 500;
+      this.gems += 10;
+      this.notice("BOSS DEFEATED! +500 Gold");
+      this.cameras.main.flash(
+        220, 255, 180, 60
+      );
+    }
+
+    const finish = () => {
+      if (!m.s.active) return;
+
+      const x = m.s.x;
+      const y = m.s.y;
+
+      m.s.destroy();
+      m.shadow.destroy();
+      m.bar.destroy();
+
+      this.enemies = this.enemies.filter(
+        e => e !== m
+      );
+
+      const count = m.boss ? 14 :
+        m.type === "hellhound" ? 5 : 3;
+
+      for (let i = 0; i < count; i++) {
+        const gem = Math.random() < 0.17;
+
+        const obj = this.add.image(
+          x + P.Math.Between(-45, 45),
+          y + P.Math.Between(-25, 25),
+          gem ? "gem" : "coin"
+        ).setDepth(y + 2);
+
+        this.drops.push({ obj, gem });
+      }
+
+      this.saveGame();
+    };
+
+    if (
+      m.type === "hellhound" &&
+      this.anims.exists("e_die")
+    ) {
+      this.playEnemy(m, "die", true);
+
+      m.s.once(
+        P.Animations.Events.ANIMATION_COMPLETE,
+        finish
+      );
+
+      this.time.delayedCall(850, finish);
+    } else {
+      finish();
+    }
+  }
+
+  facing(x, y) {
+    return Math.abs(x) > Math.abs(y)
+      ? (x < 0 ? "left" : "right")
+      : (y < 0 ? "up" : "down");
+  }
+
+  vector(dir) {
+    return {
+      down: [0, 1],
+      up: [0, -1],
+      left: [-1, 0],
+      right: [1, 0]
+    }[dir];
+  }
+
+  slash(x, y, dir, combo) {
+    const g = this.add.graphics()
+      .setPosition(x, y - 40)
+      .setDepth(15000);
+
+    const angle = {
+      right: 0,
+      left: Math.PI,
+      down: Math.PI / 2,
+      up: -Math.PI / 2
+    }[dir];
+
+    const radius = combo === 3 ? 105 : 76;
+
+    g.lineStyle(
+      combo === 3 ? 17 : 12,
+      combo === 3 ? 0xff9b2d : 0x7cddff,
+      0.85
+    );
+
+    g.beginPath();
+    g.arc(
+      0, 0, radius,
+      angle - 1.15,
+      angle + 1.15
+    );
+    g.strokePath();
+
+    g.lineStyle(5, 0xffffff);
+    g.beginPath();
+    g.arc(
+      0, 0, radius,
+      angle - 1.15,
+      angle + 1.15
+    );
+    g.strokePath();
+
+    this.tweens.add({
+      targets: g,
+      alpha: 0,
+      scaleX: 1.25,
+      scaleY: 1.25,
+      duration: 220,
+      onComplete: () => g.destroy()
+    });
+
+    this.sparks(
+      x, y - 40,
+      combo === 3 ? 0xffa12a : 0x8feeff,
+      10
+    );
+  }
+
+  attack() {
+    const now = this.time.now;
+
+    if (
+      this.panelMode ||
+      this.attacking ||
+      now - this.lastAttack < 290
+    ) return;
+
+    this.combo = now < this.comboExpire
+      ? this.combo % 3 + 1 : 1;
+
+    this.comboExpire = now + 1050;
+    this.lastAttack = now;
+    this.attacking = true;
+    this.attackDir = this.dir;
+    this.hitDone = false;
+
+    this.attackAt = now +
+      (this.combo === 3 ? 220 : 125);
+
+    this.attackEnd = now +
+      (this.combo === 3 ? 480 : 335);
+
+    this.playHero(
+      "attack", this.attackDir, true
+    );
+  }
+
+  resolveAttack() {
+    const [dx, dy] = this.vector(
+      this.attackDir
+    );
+
+    this.slash(
+      this.hero.x + dx * 48,
+      this.hero.y + dy * 26,
+      this.attackDir,
+      this.combo
+    );
+
+    const range = this.combo === 3 ? 175 : 125;
+
+    for (const m of [...this.enemies]) {
+      if (m.dead) continue;
+
+      const ex = m.s.x - this.hero.x;
+      const ey = m.s.y - this.hero.y;
+      const dist = Math.hypot(ex, ey);
+
+      if (
+        dist > range ||
+        dist < 1 ||
+        ex * dx + ey * dy < -10 ||
+        Math.abs(ex * dy - ey * dx) >
+          (this.combo === 3 ? 125 : 80)
+      ) continue;
+
+      const damage = (
+        this.combo === 3 ? 44 :
+        this.combo === 2 ? 26 : 18
+      ) + this.sword * 8;
+
+      this.hitEnemy(m, damage, dx, dy);
+    }
+
+    if (this.combo === 3) {
+      this.cameras.main.shake(90, 0.003);
+    }
+  }
+
+  skill() {
+    const now = this.time.now;
+
+    if (
+      this.panelMode ||
+      now - this.lastSkill < 4000
+    ) return;
+
+    this.lastSkill = now;
+
+    const ring = this.add.circle(
+      this.hero.x,
+      this.hero.y - 28,
+      22,
+      0xff7426,
+      0.15
+    ).setStrokeStyle(9, 0xffbd4e)
+      .setDepth(15000);
+
+    this.tweens.add({
+      targets: ring,
+      scaleX: 10,
+      scaleY: 10,
+      alpha: 0,
+      duration: 400,
+      onComplete: () => ring.destroy()
+    });
+
+    this.sparks(
+      this.hero.x,
+      this.hero.y - 30,
+      0xffb13a,
+      30
+    );
+
+    this.cameras.main.shake(160, 0.004);
+
+    for (const m of [...this.enemies]) {
+      if (m.dead) continue;
+
+      const dx = m.s.x - this.hero.x;
+      const dy = m.s.y - this.hero.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < 230) {
+        this.hitEnemy(
+          m,
+          65 + this.sword * 12,
+          dist ? dx / dist : 1,
+          dist ? dy / dist : 0
+        );
+      }
+    }
+  }
+
+  hurtHero(damage) {
+    const now = this.time.now;
+
+    if (
+      now - this.lastHurt < 550 ||
+      this.safe(this.hero.x, this.hero.y)
+    ) return;
+
+    this.lastHurt = now;
+    this.hp = Math.max(0, this.hp - damage);
+    this.hero.setTintFill(0xff7777);
+
+    this.time.delayedCall(140, () => {
+      if (this.hero.active) {
+        this.hero.clearTint();
+      }
+    });
+
+    this.floatText(
+      this.hero.x,
+      this.hero.y - 120,
+      `-${damage}`,
+      "#ff7a7a"
+    );
+  }
+
+  updateEnemies(now) {
+    for (const m of [...this.enemies]) {
+      if (m.dead) continue;
+
+      const s = m.s;
+      const dx = this.hero.x - s.x;
+      const dy = this.hero.y - s.y;
+      const dist = Math.hypot(dx, dy);
+
+      const heroSafe = this.safe(
+        this.hero.x, this.hero.y, 10
+      );
+
+      if (m.type === "hellhound") {
+        s.setFlipX(this.hero.x < s.x);
+      }
+
+      if (now < m.stun) {
+        s.setVelocity(m.knockX, m.knockY);
+        m.knockX *= 0.86;
+        m.knockY *= 0.86;
+      } else if (
+        m.state === "attack" &&
+        now < m.attackEnd
+      ) {
+        s.setVelocity(0, 0);
+
+        if (
+          !m.attackDone &&
+          now >= m.attackAt
+        ) {
+          m.attackDone = true;
+
+          this.sparks(
+            s.x, s.y - 35,
+            0xff7426,
+            m.boss ? 20 : 9
+          );
+
+          if (
+            dist < (m.boss ? 150 : 83) &&
+            !heroSafe
+          ) {
+            this.hurtHero(
+              m.boss ? 22 : 9
+            );
+          }
+        }
+      } else {
+        m.state = "idle";
+
+        if (now >= m.nextAI) {
+          m.nextAI = now + 180;
+
+          if (
+            heroSafe ||
+            dist > 410 ||
+            dist < (m.boss ? 115 : 65)
+          ) {
+            m.steerX = 0;
+            m.steerY = 0;
+          } else {
+            const ux = dx / dist;
+            const uy = dy / dist;
+
+            const options = [
+              [ux, uy],
+              [-uy, ux],
+              [uy, -ux],
+              [-ux, -uy]
+            ];
+
+            let chosen = [0, 0];
+
+            for (const [vx, vy] of options) {
+              const tx = s.x + vx * 65;
+              const ty = s.y + vy * 65;
+
+              if (
+                this.walkable(tx, ty, 25) &&
+                !this.safe(tx, ty, 15)
+              ) {
+                chosen = [vx, vy];
+                break;
+              }
+            }
+
+            m.steerX = chosen[0];
+            m.steerY = chosen[1];
+          }
+        }
+
+        s.setVelocity(
+          m.steerX * m.speed,
+          m.steerY * m.speed
+        );
+
+        if (
+          !heroSafe &&
+          dist < (m.boss ? 140 : 78) &&
+          now - m.lastAttack >
+            (m.boss ? 1350 : 1800)
+        ) {
+          m.lastAttack = now;
+          m.attackAt = now + 340;
+          m.attackEnd = now + 690;
+          m.attackDone = false;
+          m.state = "attack";
+          m.attackCount++;
+
+          this.playEnemy(
+            m,
+            m.attackCount % 2
+              ? "attack_1"
+              : "attack_2",
+            true
+          );
+        } else if (m.type === "hellhound") {
+          this.playEnemy(
+            m,
+            dist < 400 && !heroSafe
+              ? "run" : "idle"
+          );
+        }
+      }
+
+      if (
+        m.type !== "hellhound" &&
+        now - m.lastFrame > 180
+      ) {
+        m.lastFrame = now;
+        m.frame = (m.frame + 1) % 4;
+
+        s.setTexture(
+          this.tex(`${m.type}_${m.frame}`)
+        );
+        s.setDisplaySize(82, 74);
+      }
+
+      if (now > m.stun) {
+        s.clearTint();
+      }
+
+      s.setDepth(s.y);
+
+      m.shadow.setPosition(s.x, s.y);
+      m.shadow.setDepth(s.y - 1);
+
+      m.bar.clear();
+
+      if (dist < 450 || m.boss) {
+        const bw = m.boss ? 100 : 55;
+        const by = s.y - s.displayHeight - 12;
+
+        m.bar.fillStyle(0x17221c);
+        m.bar.fillRect(
+          s.x - bw / 2, by, bw, 9
+        );
+
+        m.bar.fillStyle(
+          m.boss ? 0xff8c32 : 0xe34b48
+        );
+
+        m.bar.fillRect(
+          s.x - bw / 2 + 1,
+          by + 1,
+          (bw - 2) * Math.max(0, m.hp / m.maxHp),
+          7
+        );
+
+        m.bar.setDepth(s.y + 1);
+      }
+
+      if (
+        m.type !== "hellhound" &&
+        !heroSafe &&
+        dist < 50 &&
+        now - m.lastAttack > 1500
+      ) {
+        m.lastAttack = now;
+
+        this.hurtHero(
+          m.type === "boar" ? 6 : 4
+        );
+      }
+    }
+  }
+
+  updateHUD() {
+    const w = this.scale.width;
+    const bw = Math.min(
+      310, Math.max(145, w - 120)
+    );
+
+    this.hud.clear();
+
+    this.hud.fillStyle(0x142335, 0.93);
+    this.hud.fillRoundedRect(
+      8, 8, bw, 94, 8
+    );
+
+    this.hud.lineStyle(2, 0xd2a35b);
+    this.hud.strokeRoundedRect(
+      8, 8, bw, 94, 8
+    );
+
+    this.hud.fillStyle(0x512f33);
+    this.hud.fillRect(15, 40, bw - 15, 12);
+
+    this.hud.fillStyle(0xe35350);
+    this.hud.fillRect(
+      15, 40,
+      (bw - 15) * this.hp / this.maxHp,
+      12
+    );
+
+    this.hud.fillStyle(0x243a51);
+    this.hud.fillRect(15, 61, bw - 15, 7);
+
+    this.hud.fillStyle(0x55b8f5);
+    this.hud.fillRect(
+      15, 61,
+      (bw - 15) * this.exp /
+        (this.level * 50),
+      7
+    );
+
+    this.hudText.setText(
+      `LV.${this.level} HP ${this.hp}/${this.maxHp}\n` +
+      `\n\nGold ${this.gold} Gem ${this.gems}` +
+      ` ATK ${18 + this.sword * 8}`
+    );
+
+    this.potionBtn.setText(
+      `🧪 ${this.potions}`
+    );
+
+    this.bossBar.clear();
+
+    if (this.boss && !this.boss.dead) {
+      this.bossLabel.setVisible(true);
+
+      const width = Math.min(w - 70, 430);
+      const x = (w - width) / 2;
+
+      this.bossBar.fillStyle(0x221b1b, 0.9);
+      this.bossBar.fillRoundedRect(
+        x, 112, width, 16, 5
+      );
+
+      this.bossBar.fillStyle(0xf06535);
+      this.bossBar.fillRoundedRect(
+        x + 2, 114,
+        (width - 4) * Math.max(
+          0,
+          this.boss.hp / this.boss.maxHp
+        ),
+        12, 4
+      );
+    } else {
+      this.bossLabel.setVisible(false);
+    }
+  }
+
+  update(now, delta) {
+    const dt = Math.min(delta / 1000, 0.05);
+
+    let x = this.stick.x;
+    let y = this.stick.y;
+
+    if (!this.panelMode) {
+      x += Number(
+        this.keys.D.isDown ||
+        this.keys.RIGHT.isDown
+      ) - Number(
+        this.keys.A.isDown ||
+        this.keys.LEFT.isDown
+      );
+
+      y += Number(
+        this.keys.S.isDown ||
+        this.keys.DOWN.isDown
+      ) - Number(
+        this.keys.W.isDown ||
+        this.keys.UP.isDown
+      );
+    } else {
+      x = 0;
+      y = 0;
+    }
+
+    const length = Math.hypot(x, y);
+
+    if (length > 1) {
+      x /= length;
+      y /= length;
+    }
+
+    const speed = this.attacking ? 105 : 220;
+
+    this.hero.setVelocity(
+      x * speed,
+      y * speed
+    );
+
+    if (this.attacking) {
+      if (
+        !this.hitDone &&
+        now >= this.attackAt
+      ) {
+        this.hitDone = true;
+        this.resolveAttack();
+      }
+
+      if (now >= this.attackEnd) {
+        this.attacking = false;
+        this.heroAction = "";
+      }
+    }
+
+    if (!this.attacking) {
+      this.playHero(
+        length > 0.1 ? "walk" : "idle",
+        length > 0.1
+          ? this.facing(x, y)
+          : this.dir
+      );
+    }
+
+    this.hero.setDepth(this.hero.y);
+
+    this.shadow.setPosition(
+      this.hero.x, this.hero.y
+    );
+    this.shadow.setDepth(this.hero.y - 1);
+
+    if (
+      !this.panelMode &&
+      (this.attackHeld || this.keys.SPACE.isDown) &&
+      !this.attacking &&
+      now - this.lastAttack > 290
+    ) {
+      this.attack();
+    }
+
+    this.updateEnemies(now);
+
+    for (let i = this.drops.length - 1; i >= 0; i--) {
+      const drop = this.drops[i];
+      const obj = drop.obj;
+
+      const dx = this.hero.x - obj.x;
+      const dy = this.hero.y - obj.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < 140) {
+        obj.x += dx * Math.min(1, dt * 8);
+        obj.y += dy * Math.min(1, dt * 8);
+      }
+
+      if (dist < 25) {
+        if (drop.gem) this.gems++;
+        else this.gold += 5;
+
+        obj.destroy();
+        this.drops.splice(i, 1);
+      }
+    }
+
+    if (
+      this.enemies.filter(m => !m.boss).length < 14 &&
+      now - this.lastSpawn > 1200
+    ) {
+      this.lastSpawn = now;
+      this.spawnEnemy();
+    }
+
+    if (this.hp <= 0) {
+      this.hp = this.maxHp;
+
+      this.hero.setPosition(
+        HOME.x, HOME.y + 95
+      );
+
+      this.cameras.main.flash(
+        250, 240, 75, 75
+      );
+
+      this.notice("กลับมาที่หมู่บ้านแล้ว");
+    }
+
+    if (now - this.lastSave > 10000) {
+      this.lastSave = now;
+      this.saveGame();
+    }
+
+    this.updateHUD();
+  }
 }
-new Phaser.Game({type:Phaser.AUTO,parent:'game',backgroundColor:'#172b3a',scale:{mode:Phaser.Scale.RESIZE,width:window.innerWidth,height:window.innerHeight,autoCenter:Phaser.Scale.CENTER_BOTH},render:{pixelArt:true,antialias:false,roundPixels:true},fps:{target:60},physics:{default:'arcade',arcade:{debug:false}},scene:[RPG]});
+
+new P.Game({
+  type: P.AUTO,
+  parent: "game",
+  backgroundColor: "#172b3a",
+
+  scale: {
+    mode: P.Scale.RESIZE,
+    width: window.innerWidth,
+    height: window.innerHeight,
+    autoCenter: P.Scale.CENTER_BOTH
+  },
+
+  render: {
+    pixelArt: true,
+    antialias: false,
+    roundPixels true
+  },
+
+  fps: {
+    target: 60
+  },
+
+  physics: {
+    default: "arcade",
+    arcade: {
+      debug: false
+    }
+  },
+
+  scene: [Game]
+});
