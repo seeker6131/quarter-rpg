@@ -1,16 +1,26 @@
 
 /*
- QUARTER RPG V1.6
- Graphics Upgrade + Landscape Mobile
- Phaser 3 | Full src/main.js
+ QUARTER RPG V2.0
+ Loot & Gear Update — ของดรอปมีแสงตามระดับ, การ์ดไอเทม,
+ ตีบวก +10, โบนัสพิเศษ Artifact, AUTO battle
+ Phaser 3 | src/main.js (+ src/gear.js, src/ui.js)
 */
+
+import {
+  RARITIES, SLOTS, DROP_TABLE, MAX_ENHANCE,
+  makeItem, rollRarity, heroStats, itemPower,
+  itemFullName, sellPrice, enhanceCost, drawIcon
+} from "./gear.js";
+import { GameUI } from "./ui.js";
 
 const Phaser3 = window.Phaser;
 if (!Phaser3) throw new Error("Phaser 3 not loaded");
 
 const WORLD_W = 2000;
 const WORLD_H = 1500;
-const SAVE_KEY = "quarter-rpg-v15";
+const SAVE_KEY = "quarter-rpg-v2";
+const OLD_SAVE_KEY = "quarter-rpg-v15";
+const BAG_SIZE = 60;
 const VILLAGE = { x: 1000, y: 750, r: 310 };
 
 class QuarterRPG extends Phaser3.Scene {
@@ -68,11 +78,13 @@ class QuarterRPG extends Phaser3.Scene {
     );
 
     this.makeGraphics();
+    this.makeLootTextures();
     this.makeAnimations();
     this.readSave();
 
     this.enemies = [];
     this.drops = [];
+    this.loot = [];
     this.obstacles = [];
     this.npcs = [];
     this.boss = null;
@@ -119,6 +131,12 @@ class QuarterRPG extends Phaser3.Scene {
     this.lastHurt = -9999;
     this.lastSpawn = 0;
     this.lastSave = 0;
+    this.frenzyUntil = 0;
+    this.attackCounter = 0;
+    this.autoTarget = null;
+    this.autoWander = null;
+    this.autoStuck = { x: 0, y: 0, t: 0, until: 0, dir: null };
+    this.lastAutoPotion = 0;
 
     this.stick = { x: 0, y: 0 };
     this.stickPointer = null;
@@ -131,9 +149,19 @@ class QuarterRPG extends Phaser3.Scene {
       .startFollow(this.hero, true, 0.12, 0.12)
       .setRoundPixels(true);
 
+    this.recalcStats();
+    this.hp = Math.min(this.hp, this.maxHp);
+
     this.createUI();
+    this.ui = new GameUI(this);
+    this.ui.setAuto(this.auto);
     this.createInput();
     this.resizeUI();
+
+    this.frenzyAura = this.add.ellipse(
+      0, 0, 70, 22, 0xff8a1e, 0.55
+    ).setBlendMode(Phaser3.BlendModes.ADD)
+      .setVisible(false);
 
     this.scale.on("resize", this.resizeUI, this);
 
@@ -379,6 +407,55 @@ class QuarterRPG extends Phaser3.Scene {
     save("gem", 24, 24);
 
     g.destroy();
+  }
+
+  makeLootTextures() {
+    // Light pillar: bright core, soft edges, fades out at the top
+    const w = 48, h = 256;
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext("2d");
+
+    const hg = ctx.createLinearGradient(0, 0, w, 0);
+    hg.addColorStop(0, "rgba(255,255,255,0)");
+    hg.addColorStop(0.35, "rgba(255,255,255,0.55)");
+    hg.addColorStop(0.5, "rgba(255,255,255,1)");
+    hg.addColorStop(0.65, "rgba(255,255,255,0.55)");
+    hg.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = hg;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.globalCompositeOperation = "destination-in";
+    const vg = ctx.createLinearGradient(0, 0, 0, h);
+    vg.addColorStop(0, "rgba(0,0,0,0)");
+    vg.addColorStop(0.6, "rgba(0,0,0,0.7)");
+    vg.addColorStop(1, "rgba(0,0,0,1)");
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, w, h);
+
+    this.textures.addCanvas("loot_beam", c);
+
+    // Soft round glow
+    const gc = document.createElement("canvas");
+    gc.width = gc.height = 64;
+    const gctx = gc.getContext("2d");
+    const rg = gctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    rg.addColorStop(0, "rgba(255,255,255,1)");
+    rg.addColorStop(1, "rgba(255,255,255,0)");
+    gctx.fillStyle = rg;
+    gctx.fillRect(0, 0, 64, 64);
+    this.textures.addCanvas("loot_glow", gc);
+
+    // Item icons for every slot × rarity
+    for (const slot of SLOTS) {
+      for (let r = 0; r < RARITIES.length; r++) {
+        this.textures.addCanvas(
+          `icon_${slot.id}_${r}`,
+          drawIcon(slot.id, r, 3)
+        );
+      }
+    }
   }
 
   makeAnimations() {
@@ -714,6 +791,11 @@ class QuarterRPG extends Phaser3.Scene {
       return;
     }
 
+    if (npc.id === 1) {
+      this.ui.openForge();
+      return;
+    }
+
     this.openPanel(
       ["shop", "forge", "quest"][npc.id]
     );
@@ -722,10 +804,18 @@ class QuarterRPG extends Phaser3.Scene {
   readSave() {
     let s = {};
 
+    let old = false;
+
     try {
-      s = JSON.parse(
-        localStorage.getItem(SAVE_KEY) || "{}"
-      );
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (raw) {
+        s = JSON.parse(raw);
+      } else {
+        s = JSON.parse(
+          localStorage.getItem(OLD_SAVE_KEY) || "{}"
+        );
+        old = true;
+      }
     } catch {}
 
     this.level = s.level || 1;
@@ -733,9 +823,11 @@ class QuarterRPG extends Phaser3.Scene {
     this.gold = s.gold ?? 100;
     this.gems = s.gems || 0;
     this.kills = s.kills || 0;
-    this.sword = s.sword || 0;
-    this.armor = s.armor || 0;
     this.potions = s.potions ?? 3;
+    this.auto = !!s.auto;
+    this.bagSize = BAG_SIZE;
+    this.inventory = Array.isArray(s.inventory) ? s.inventory : [];
+    this.equipped = s.equipped || {};
     this.bossWins = s.bossWins ?? s.bossDefeated ?? 0;
 
     this.quest = s.quest || {
@@ -744,8 +836,162 @@ class QuarterRPG extends Phaser3.Scene {
       claimed: false
     };
 
-    this.maxHp = 100 + this.armor * 25;
-    this.hp = this.maxHp;
+    // New player (or old V1.x save): starter gear.
+    // Old Sword/Armor levels become enhance levels.
+    if (!s.equipped) {
+      const sword = makeItem(1, 0, "weapon");
+      sword.name = "Rusty Sword";
+      sword.enhance = Math.min(MAX_ENHANCE, old ? s.sword || 0 : 0);
+
+      const armor = makeItem(1, 0, "armor");
+      armor.name = "Worn Plate";
+      armor.enhance = Math.min(MAX_ENHANCE, old ? s.armor || 0 : 0);
+
+      this.equipped = { weapon: sword, armor };
+    }
+
+    this.maxHp = 100;
+    this.hp = s.hp || 99999;
+  }
+
+  /* ---------- gear ---------- */
+
+  recalcStats() {
+    this.stats = heroStats(
+      this.level,
+      SLOTS.map(sl => this.equipped[sl.id])
+    );
+
+    this.maxHp = this.stats.hp;
+    this.hp = Math.min(this.hp, this.maxHp);
+    this.special = {};
+
+    for (const sp of this.stats.specials) {
+      const cur = this.special[sp.type];
+      if (!cur || (sp.chance || sp.power) > (cur.chance || cur.power)) {
+        this.special[sp.type] = sp;
+      }
+    }
+  }
+
+  isEquipped(item) {
+    return this.equipped[item.slot]?.id === item.id;
+  }
+
+  findItem(id) {
+    return Object.values(this.equipped).find(i => i && i.id === id) ||
+      this.inventory.find(i => i.id === id);
+  }
+
+  addToBag(item) {
+    if (this.inventory.length >= this.bagSize) {
+      // Bag full: auto-sell the new item if it is weaker than Rare
+      if (item.rarity < 2) {
+        this.gold += sellPrice(item);
+        return "sold";
+      }
+      const weakest = [...this.inventory]
+        .filter(i => i.rarity < 2)
+        .sort((a, b) => itemPower(a) - itemPower(b))[0];
+      if (!weakest) return "full";
+      this.sellItem(weakest);
+    }
+
+    this.inventory.push(item);
+    return "ok";
+  }
+
+  canEquip(item) {
+    return item.level <= this.level;
+  }
+
+  equipItem(item) {
+    if (!this.canEquip(item)) {
+      this.message(`ต้องการ Lv.${item.level}`);
+      return false;
+    }
+
+    const old = this.equipped[item.slot];
+    this.inventory = this.inventory.filter(i => i.id !== item.id);
+    if (old) this.inventory.push(old);
+    this.equipped[item.slot] = item;
+
+    const hpRatio = this.hp / this.maxHp;
+    this.recalcStats();
+    this.hp = Math.max(1, Math.round(this.maxHp * hpRatio));
+    this.message(`สวมใส่ ${itemFullName(item)}`);
+    this.saveGame();
+    return true;
+  }
+
+  unequipSlot(slot) {
+    const item = this.equipped[slot];
+    if (!item) return;
+    if (this.inventory.length >= this.bagSize) {
+      this.message("กระเป๋าเต็ม");
+      return;
+    }
+    delete this.equipped[slot];
+    this.inventory.push(item);
+    this.recalcStats();
+    this.saveGame();
+  }
+
+  sellItem(item) {
+    if (this.isEquipped(item)) return;
+    this.inventory = this.inventory.filter(i => i.id !== item.id);
+    this.gold += sellPrice(item);
+    this.saveGame();
+  }
+
+  sellBelow(rarity) {
+    const sell = this.inventory.filter(i => i.rarity < rarity);
+    for (const i of sell) this.gold += sellPrice(i);
+    this.inventory = this.inventory.filter(i => i.rarity >= rarity);
+    this.saveGame();
+    return sell.length;
+  }
+
+  enhanceItem(item) {
+    if (item.enhance >= MAX_ENHANCE) return "max";
+    const cost = enhanceCost(item);
+
+    if (this.gold < cost.gold || this.gems < cost.gems) {
+      this.message("Gold / Gems ไม่เพียงพอ");
+      return "nomoney";
+    }
+
+    this.gold -= cost.gold;
+    this.gems -= cost.gems;
+
+    const ok = Math.random() * 100 < cost.rate;
+    if (ok) {
+      item.enhance++;
+      if (this.isEquipped(item)) this.recalcStats();
+    }
+
+    this.saveGame();
+    return ok ? "ok" : "fail";
+  }
+
+  onUIOpen() {
+    this.stick = { x: 0, y: 0 };
+    this.stickPointer = null;
+    this.attackHeld = false;
+    this.joyKnob?.setPosition(this.joyBase.x, this.joyBase.y);
+    if (this.scene.isActive()) this.scene.pause();
+  }
+
+  onUIClose() {
+    this.input.keyboard.resetKeys();
+    this.scene.resume();
+  }
+
+  toggleAuto() {
+    this.auto = !this.auto;
+    this.autoTarget = null;
+    this.message(this.auto ? "AUTO BATTLE: เปิด" : "AUTO BATTLE: ปิด");
+    this.saveGame();
   }
 
   saveGame() {
@@ -758,9 +1004,11 @@ class QuarterRPG extends Phaser3.Scene {
           gold: this.gold,
           gems: this.gems,
           kills: this.kills,
-          sword: this.sword,
-          armor: this.armor,
+          hp: this.hp,
           potions: this.potions,
+          auto: this.auto,
+          inventory: this.inventory,
+          equipped: this.equipped,
           bossWins: this.bossWins,
           quest: this.quest
         })
@@ -839,20 +1087,6 @@ class QuarterRPG extends Phaser3.Scene {
 
       if (npc) this.talk(npc);
       else this.message("ไม่มี NPC อยู่ใกล้");
-    });
-
-    this.bagButton = fixed(this.add.text(
-      0, 0, "BAG",
-      {
-        fontSize: "13px",
-        color: "#ffffff",
-        backgroundColor: "#384f72",
-        padding: { x: 10, y: 7 }
-      }
-    ).setOrigin(0.5).setInteractive());
-
-    this.bagButton.on("pointerdown", () => {
-      this.openPanel("bag");
     });
 
     this.potionButton = fixed(this.add.text(
@@ -974,15 +1208,11 @@ class QuarterRPG extends Phaser3.Scene {
     );
 
     this.talkButton.setPosition(
-      w / 2, h - 34
-    );
-
-    this.bagButton.setPosition(
-      w - 45, 32
+      w / 2, h - (landscape ? 90 : 100)
     );
 
     this.potionButton.setPosition(
-      w - 46, 77
+      w - 58, 30
     );
 
     this.noticeText.setPosition(
@@ -1032,7 +1262,7 @@ class QuarterRPG extends Phaser3.Scene {
 
   createInput() {
     this.keys = this.input.keyboard.addKeys(
-      "W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,E,Q,I,F"
+      "W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,E,Q,F"
     );
 
     this.input.addPointer(2);
@@ -1109,11 +1339,6 @@ class QuarterRPG extends Phaser3.Scene {
       if (!this.panelMode) this.usePotion();
     });
 
-    this.keys.I.on("down", () => {
-      if (this.panelMode) this.closePanel();
-      else this.openPanel("bag");
-    });
-
     this.keys.F.on("down", () => {
       if (!this.panelMode) this.skill();
     });
@@ -1164,25 +1389,13 @@ class QuarterRPG extends Phaser3.Scene {
 
     if (mode === "shop") {
       title = "MIRA'S SHOP";
-      info = `Gold: ${this.gold}`;
+      info = `Gold: ${this.gold}  Gems: ${this.gems}`;
 
       options = [
-        "ซื้อยา HP +50 — 20 Gold",
+        "ซื้อยา HP +30% — 20 Gold",
         "ซื้อยา 3 ขวด — 50 Gold",
-        "ฟื้น HP เต็ม — 15 Gold"
-      ];
-    }
-
-    if (mode === "forge") {
-      title = "BRON'S FORGE";
-
-      info = `Gold ${this.gold}\n` +
-        `Sword Lv.${this.sword} | Armor Lv.${this.armor}`;
-
-      options = [
-        `อัปดาบ — ${60 * (this.sword + 1)} Gold`,
-        `อัปเกราะ — ${50 * (this.armor + 1)} Gold`,
-        "ฟื้น HP — 10 Gold"
+        "ฟื้น HP เต็ม — 15 Gold",
+        "🎁 หีบปริศนา (Rare+) — 10 Gems"
       ];
     }
 
@@ -1206,22 +1419,6 @@ class QuarterRPG extends Phaser3.Scene {
       }
     }
 
-    if (mode === "bag") {
-      title = "INVENTORY";
-
-      info =
-        `LEVEL ${this.level}\n` +
-        `HP ${this.hp}/${this.maxHp}\n` +
-        `ATK ${18 + this.sword * 8}\n` +
-        `Sword Lv.${this.sword}\n` +
-        `Armor Lv.${this.armor}\n` +
-        `Gold ${this.gold} | Gems ${this.gems}\n` +
-        `Potions ${this.potions}\n` +
-        `Boss Wins ${this.bossWins}`;
-
-      options = ["ใช้ยาฟื้น HP"];
-    }
-
     this.panelTitle.setText(title);
     this.panelInfo.setText(info);
 
@@ -1234,9 +1431,24 @@ class QuarterRPG extends Phaser3.Scene {
   panelAction(index) {
     const mode = this.panelMode;
 
-    if (mode === "bag") {
-      if (index === 0) this.usePotion();
-      this.refreshPanel();
+    if (mode === "shop" && index === 3) {
+      if (this.gems < 10) {
+        this.message("Gems ไม่เพียงพอ");
+        return;
+      }
+      if (this.inventory.length >= this.bagSize) {
+        this.message("กระเป๋าเต็ม");
+        return;
+      }
+
+      this.gems -= 10;
+      const item = makeItem(
+        this.level, rollRarity(DROP_TABLE.chest)
+      );
+      this.inventory.push(item);
+      this.saveGame();
+      this.closePanel();
+      this.ui.showItemCard(item, {});
       return;
     }
 
@@ -1267,12 +1479,6 @@ class QuarterRPG extends Phaser3.Scene {
 
     if (mode === "shop") {
       cost = [20, 50, 15][index];
-    } else if (mode === "forge") {
-      cost = [
-        60 * (this.sword + 1),
-        50 * (this.armor + 1),
-        10
-      ][index];
     }
 
     if (cost === undefined) return;
@@ -1282,32 +1488,11 @@ class QuarterRPG extends Phaser3.Scene {
       return;
     }
 
-    if (
-      mode === "forge" &&
-      ((index === 0 && this.sword >= 10) ||
-       (index === 1 && this.armor >= 10))
-    ) {
-      this.message("อัปเกรดสูงสุดแล้ว");
-      return;
-    }
-
     this.gold -= cost;
 
     if (mode === "shop") {
       if (index === 0) this.potions++;
       if (index === 1) this.potions += 3;
-      if (index === 2) this.hp = this.maxHp;
-    }
-
-    if (mode === "forge") {
-      if (index === 0) this.sword++;
-
-      if (index === 1) {
-        this.armor++;
-        this.maxHp += 25;
-        this.hp += 25;
-      }
-
       if (index === 2) this.hp = this.maxHp;
     }
 
@@ -1327,10 +1512,11 @@ class QuarterRPG extends Phaser3.Scene {
       return;
     }
 
+    const heal = Math.max(50, Math.round(this.maxHp * 0.3));
     this.potions--;
-    this.hp = Math.min(this.maxHp, this.hp + 50);
+    this.hp = Math.min(this.maxHp, this.hp + heal);
     this.saveGame();
-    this.message("HP +50");
+    this.message(`HP +${heal}`);
   }
 
   message(text) {
@@ -1419,13 +1605,21 @@ class QuarterRPG extends Phaser3.Scene {
 
     this.physics.add.collider(sprite, this.walls);
 
-    const hp = isBoss ? 2200 :
+    const lv = isBoss
+      ? this.level + 3
+      : Math.max(1, this.level + Phaser3.Math.Between(-1, 1));
+    const scale = 1 + (lv - 1) * 0.28;
+
+    const hp = Math.round((isBoss ? 2200 :
       type === "hellhound" ? 125 :
-      type === "boar" ? 85 : 45;
+      type === "boar" ? 85 : 45) * scale);
 
     const enemy = {
       type,
       boss: isBoss,
+      lv,
+      def: lv * 2,
+      dmgScale: 1 + (lv - 1) * 0.18,
       sprite,
       hp,
       maxHp: hp,
@@ -1480,17 +1674,18 @@ class QuarterRPG extends Phaser3.Scene {
     while (this.exp >= this.level * 50) {
       this.exp -= this.level * 50;
       this.level++;
-      this.hp = Math.min(this.maxHp, this.hp + 30);
+      this.recalcStats();
+      this.hp = this.maxHp;
       this.message(`LEVEL UP! Lv.${this.level}`);
     }
   }
 
-  floatingText(x, y, value, color) {
+  floatingText(x, y, value, color, big = false) {
     const text = this.add.text(
       x, y, String(value),
       {
         fontFamily: "system-ui",
-        fontSize: "21px",
+        fontSize: big ? "27px" : "21px",
         fontStyle: "bold",
         color,
         stroke: "#241a18",
@@ -1527,10 +1722,30 @@ class QuarterRPG extends Phaser3.Scene {
     }
   }
 
-  damageEnemy(enemy, damage, dx, dy) {
+  // Damage roll: ATK × multiplier, crit, minus (DEF - PEN)
+  rollDamage(mult, enemy) {
+    const s = this.stats;
+    let raw = s.atk * mult * Phaser3.Math.FloatBetween(0.92, 1.08);
+    const crit = Math.random() < s.critChance;
+    if (crit) raw *= s.critMult;
+    const reduce = Math.max(0, enemy.def - s.pen);
+    return {
+      damage: Math.max(1, Math.round(raw - reduce)),
+      crit
+    };
+  }
+
+  damageEnemy(enemy, damage, dx, dy, crit = false) {
     if (enemy.dead) return;
 
     enemy.hp -= damage;
+
+    if (this.stats.lifesteal > 0) {
+      this.hp = Math.min(
+        this.maxHp,
+        this.hp + Math.ceil(damage * this.stats.lifesteal)
+      );
+    }
     enemy.stunUntil = this.time.now + 180;
     enemy.knockX = dx * (enemy.boss ? 100 : 260);
     enemy.knockY = dy * (enemy.boss ? 100 : 260);
@@ -1538,10 +1753,11 @@ class QuarterRPG extends Phaser3.Scene {
     enemy.sprite.setTintFill(0xffffff);
 
     this.floatingText(
-      enemy.sprite.x,
+      enemy.sprite.x + Phaser3.Math.Between(-12, 12),
       enemy.sprite.y - enemy.sprite.displayHeight - 10,
-      `-${damage}`,
-      damage >= 45 ? "#ffcf69" : "#ffffff"
+      crit ? `CRIT ${damage}!` : `-${damage}`,
+      crit ? "#ffcf69" : "#ffffff",
+      crit
     );
 
     this.sparks(
@@ -1567,10 +1783,11 @@ class QuarterRPG extends Phaser3.Scene {
 
     this.kills++;
 
-    this.gainExp(
-      enemy.boss ? 500 :
-      enemy.type === "hellhound" ? 35 : 15
-    );
+    this.gainExp(Math.round(
+      (enemy.boss ? 500 :
+       enemy.type === "hellhound" ? 35 : 15) *
+      (1 + (enemy.lv - 1) * 0.15)
+    ));
 
     if (
       enemy.type === "hellhound" &&
@@ -1615,8 +1832,10 @@ class QuarterRPG extends Phaser3.Scene {
           gem ? "gem" : "coin"
         ).setDepth(y + 2);
 
-        this.drops.push({ obj, gem });
+        this.drops.push({ obj, gem, lv: enemy.lv });
       }
+
+      this.rollGearDrops(enemy, x, y);
 
       this.saveGame();
     };
@@ -1636,6 +1855,259 @@ class QuarterRPG extends Phaser3.Scene {
     } else {
       finish();
     }
+  }
+
+  /* ---------- loot drops ---------- */
+
+  rollGearDrops(enemy, x, y) {
+    let rolls = [];
+
+    if (enemy.boss) {
+      rolls = [DROP_TABLE.boss, DROP_TABLE.boss, DROP_TABLE.elite];
+    } else {
+      const chance = enemy.type === "hellhound" ? 0.22 :
+        enemy.type === "boar" ? 0.15 : 0.12;
+      if (Math.random() < chance) {
+        rolls = [enemy.type === "hellhound"
+          ? DROP_TABLE.elite : DROP_TABLE.normal];
+      }
+    }
+
+    rolls.forEach((table, i) => {
+      const item = makeItem(enemy.lv, rollRarity(table));
+      this.time.delayedCall(i * 220, () => this.spawnLoot(item, x, y));
+    });
+  }
+
+  spawnLoot(item, x, y) {
+    const r = RARITIES[item.rarity];
+    const tx = Phaser3.Math.Clamp(x + Phaser3.Math.Between(-60, 60), 30, WORLD_W - 30);
+    const ty = Phaser3.Math.Clamp(y + Phaser3.Math.Between(-30, 40), 40, WORLD_H - 20);
+
+    const glow = this.add.image(tx, ty, "loot_glow")
+      .setTint(r.hex)
+      .setBlendMode(Phaser3.BlendModes.ADD)
+      .setDisplaySize(item.rarity >= 3 ? 90 : 56, item.rarity >= 3 ? 34 : 22)
+      .setAlpha(0.8)
+      .setDepth(ty - 2);
+
+    let beam = null;
+    if (r.beam) {
+      beam = this.add.image(tx, ty + 4, "loot_beam")
+        .setOrigin(0.5, 1)
+        .setTint(r.hex)
+        .setBlendMode(Phaser3.BlendModes.ADD)
+        .setDisplaySize(item.rarity >= 4 ? 46 : 30, 1)
+        .setDepth(ty + 1);
+
+      // Pillar shoots up from the ground
+      this.tweens.add({
+        targets: beam,
+        displayHeight: r.beam,
+        duration: 380,
+        ease: "Back.Out"
+      });
+      this.tweens.add({
+        targets: beam,
+        alpha: { from: 1, to: 0.55 },
+        duration: 600,
+        yoyo: true,
+        repeat: -1,
+        delay: 400
+      });
+    }
+
+    const icon = this.add.image(x, y - 30, `icon_${item.slot}_${item.rarity}`)
+      .setDepth(ty + 2)
+      .setScale(0.85);
+
+    // Item pops out of the monster in an arc
+    this.tweens.add({ targets: icon, x: tx, duration: 420 });
+    this.tweens.add({
+      targets: icon,
+      y: { from: y - 30, to: ty - 75 },
+      duration: 210,
+      ease: "Quad.Out",
+      yoyo: false,
+      onComplete: () => {
+        this.tweens.add({
+          targets: icon, y: ty - 22, duration: 210, ease: "Bounce.Out",
+          onComplete: () => {
+            this.tweens.add({
+              targets: icon, y: ty - 30, duration: 700,
+              yoyo: true, repeat: -1, ease: "Sine.InOut"
+            });
+          }
+        });
+      }
+    });
+
+    const label = this.add.text(tx, ty + 10, itemFullName(item), {
+      fontFamily: "system-ui",
+      fontSize: "11px",
+      color: r.color,
+      stroke: "#000",
+      strokeThickness: 3
+    }).setOrigin(0.5, 0).setDepth(ty + 3);
+
+    this.loot.push({ item, icon, beam, glow, label, x: tx, y: ty, born: this.time.now });
+
+    if (item.rarity >= 4) {
+      this.cameras.main.flash(160, ...(item.rarity === 5 ? [255, 80, 160] : [255, 190, 60]));
+      this.ui.banner(
+        item.rarity === 5 ? "An {hl} item dropped!" : "A {hl} item dropped!",
+        item.rarity === 5 ? "artifact-grade" : "legendary",
+        item.rarity
+      );
+    } else if (item.rarity === 3) {
+      this.sparks(tx, ty - 20, r.hex, 14);
+    }
+  }
+
+  updateLoot(now) {
+    const hue = (now / 6) % 360;
+
+    for (let i = this.loot.length - 1; i >= 0; i--) {
+      const l = this.loot[i];
+
+      if (l.item.rarity === 5) {
+        const c = Phaser3.Display.Color.HSVToRGB(hue / 360, 0.75, 1).color;
+        l.beam?.setTint(c);
+        l.glow.setTint(c);
+      }
+
+      const d = Math.hypot(this.hero.x - l.x, this.hero.y - l.y);
+      if (d < 48 && now - l.born > 450) {
+        this.pickupLoot(l);
+        this.loot.splice(i, 1);
+        if (this.ui.isOpen) return;
+      }
+    }
+  }
+
+  pickupLoot(l) {
+    for (const o of [l.icon, l.beam, l.glow, l.label]) {
+      if (!o) continue;
+      this.tweens.killTweensOf(o);
+      o.destroy();
+    }
+
+    const item = l.item;
+    const res = this.addToBag(item);
+
+    if (res === "sold") {
+      this.ui.toast(item, "ขายอัตโนมัติ");
+      return;
+    }
+    if (res === "full") {
+      this.message("กระเป๋าเต็ม! ขายของก่อน");
+      this.inventory.push(item);
+    }
+
+    this.sparks(this.hero.x, this.hero.y - 40, RARITIES[item.rarity].hex, 12);
+    this.saveGame();
+
+    // Empty slot? equip right away (comfortable for new players)
+    if (!this.equipped[item.slot] && this.canEquip(item)) {
+      this.equipItem(item);
+      this.ui.toast(item, "สวมใส่");
+      return;
+    }
+
+    if (item.rarity >= 4) {
+      this.ui.showItemCard(item, {});
+    } else {
+      this.ui.toast(item);
+    }
+  }
+
+  /* ---------- auto battle ---------- */
+
+  autoControl(now) {
+    const hero = this.hero;
+
+    if (
+      this.hp < this.maxHp * 0.35 &&
+      this.potions > 0 &&
+      now - this.lastAutoPotion > 1500
+    ) {
+      this.lastAutoPotion = now;
+      this.usePotion();
+    }
+
+    // 1) pick up loot nearby
+    let goal = null;
+    let best = 650;
+    for (const l of this.loot) {
+      const d = Math.hypot(l.x - hero.x, l.y - hero.y);
+      if (d < best) { best = d; goal = { x: l.x, y: l.y, loot: true }; }
+    }
+
+    // 2) nearest monster (boss first)
+    if (!goal) {
+      let target = this.boss && !this.boss.dead ? this.boss : null;
+      if (!target) {
+        best = 900;
+        for (const e of this.enemies) {
+          if (e.dead) continue;
+          const d = Math.hypot(e.sprite.x - hero.x, e.sprite.y - hero.y);
+          if (d < best) { best = d; target = e; }
+        }
+      }
+
+      if (target) {
+        const dx = target.sprite.x - hero.x;
+        const dy = target.sprite.y - hero.y;
+        const d = Math.hypot(dx, dy);
+        const reach = target.boss ? 110 : 70;
+
+        if (d < reach) {
+          this.direction = this.facing(dx, dy);
+
+          const near = this.enemies.filter(e => !e.dead &&
+            Math.hypot(e.sprite.x - hero.x, e.sprite.y - hero.y) < 220).length;
+          if ((near >= 3 || target.boss) && now - this.lastSkill > 4000) {
+            this.skill();
+          }
+          return { x: 0, y: 0, attack: true };
+        }
+        goal = { x: target.sprite.x, y: target.sprite.y };
+      }
+    }
+
+    // 3) nothing around: wander out of the village
+    if (!goal) {
+      if (!this.autoWander || Math.hypot(this.autoWander.x - hero.x, this.autoWander.y - hero.y) < 40) {
+        this.autoWander = {
+          x: Phaser3.Math.Between(200, WORLD_W - 200),
+          y: Phaser3.Math.Between(200, WORLD_H - 200)
+        };
+      }
+      goal = this.autoWander;
+    }
+
+    let mx = goal.x - hero.x;
+    let my = goal.y - hero.y;
+    const len = Math.hypot(mx, my) || 1;
+    mx /= len;
+    my /= len;
+
+    // Simple unstuck: if we barely moved, side-step for a moment
+    const st = this.autoStuck;
+    if (now < st.until && st.dir) return { x: st.dir.x, y: st.dir.y };
+    if (now - st.t > 600) {
+      if (Math.hypot(hero.x - st.x, hero.y - st.y) < 12) {
+        const side = Math.random() < 0.5 ? 1 : -1;
+        st.dir = { x: -my * side, y: mx * side };
+        st.until = now + 450;
+        this.autoWander = null;
+      }
+      st.x = hero.x;
+      st.y = hero.y;
+      st.t = now;
+    }
+
+    return { x: mx, y: my };
   }
 
   facing(x, y) {
@@ -1706,14 +2178,32 @@ class QuarterRPG extends Phaser3.Scene {
     );
   }
 
+  // Attack speed: normal bonus is capped at +100%.
+  // Artifact "frenzy" breaks the cap (+300%).
+  attackSpeed() {
+    const frenzy = this.time.now < this.frenzyUntil
+      ? (this.special.frenzy?.power || 300) / 100 : 0;
+    return 1 + this.stats.aspdCapped + frenzy;
+  }
+
   attack() {
     const now = this.time.now;
+    const spd = this.attackSpeed();
 
     if (
       this.panelMode ||
       this.attacking ||
-      now - this.lastAttack < 290
+      now - this.lastAttack < 290 / spd
     ) return;
+
+    const fz = this.special.frenzy;
+    if (fz && now >= this.frenzyUntil && Math.random() * 100 < fz.chance) {
+      this.frenzyUntil = now + 2500;
+      this.floatingText(
+        this.hero.x, this.hero.y - 115,
+        "FRENZY!", "#ff9b2d", true
+      );
+    }
 
     this.combo = now < this.comboUntil
       ? this.combo % 3 + 1 : 1;
@@ -1724,15 +2214,18 @@ class QuarterRPG extends Phaser3.Scene {
     this.attackDirection = this.direction;
     this.attackHit = false;
 
+    const s2 = this.attackSpeed();
+
     this.attackTime = now +
-      (this.combo === 3 ? 220 : 125);
+      (this.combo === 3 ? 220 : 125) / s2;
 
     this.attackEnd = now +
-      (this.combo === 3 ? 480 : 335);
+      (this.combo === 3 ? 480 : 335) / s2;
 
     this.animateHero(
       "attack", this.attackDirection, true
     );
+    this.hero.anims.timeScale = s2;
   }
 
   resolveAttack() {
@@ -1748,6 +2241,7 @@ class QuarterRPG extends Phaser3.Scene {
     );
 
     const range = this.combo === 3 ? 175 : 125;
+    let hitAny = null;
 
     for (const enemy of [...this.enemies]) {
       if (enemy.dead) continue;
@@ -1764,16 +2258,91 @@ class QuarterRPG extends Phaser3.Scene {
           (this.combo === 3 ? 125 : 80)
       ) continue;
 
-      const damage = (
-        this.combo === 3 ? 44 :
-        this.combo === 2 ? 26 : 18
-      ) + this.sword * 8;
+      const hit = this.rollDamage(
+        this.combo === 3 ? 2.45 :
+        this.combo === 2 ? 1.45 : 1,
+        enemy
+      );
 
-      this.damageEnemy(enemy, damage, dx, dy);
+      this.damageEnemy(enemy, hit.damage, dx, dy, hit.crit);
+      hitAny = enemy;
     }
 
     if (this.combo === 3) {
       this.cameras.main.shake(90, 0.003);
+    }
+
+    this.attackCounter++;
+    this.triggerSpecials(hitAny);
+  }
+
+  triggerSpecials(target) {
+    const th = this.special.thunder;
+    if (th && target && Math.random() * 100 < th.chance) {
+      this.lightning(target.sprite.x, target.sprite.y, th.power / 100);
+    }
+
+    const qk = this.special.quake;
+    if (qk && this.attackCounter % qk.every === 0) {
+      this.shockwave(qk.power / 100, 0x9fe8ff, 190);
+    }
+  }
+
+  lightning(x, y, mult) {
+    const g = this.add.graphics().setDepth(16000);
+    let px = x + Phaser3.Math.Between(-20, 20);
+    let py = y - 420;
+    g.lineStyle(7, 0x9fe8ff, 0.9);
+    g.beginPath();
+    g.moveTo(px, py);
+    while (py < y - 30) {
+      px = x + Phaser3.Math.Between(-24, 24);
+      py += Phaser3.Math.Between(40, 70);
+      g.lineTo(px, Math.min(py, y - 30));
+    }
+    g.strokePath();
+    g.lineStyle(3, 0xffffff);
+    g.strokePath();
+
+    this.tweens.add({
+      targets: g, alpha: 0, duration: 260,
+      onComplete: () => g.destroy()
+    });
+    this.sparks(x, y - 30, 0x9fe8ff, 16);
+    this.cameras.main.flash(70, 160, 220, 255);
+
+    for (const e of [...this.enemies]) {
+      if (e.dead) continue;
+      if (Math.hypot(e.sprite.x - x, e.sprite.y - y) < 95) {
+        const hit = this.rollDamage(mult, e);
+        this.damageEnemy(e, hit.damage, 0, 0, hit.crit);
+      }
+    }
+  }
+
+  shockwave(mult, color, radius) {
+    const ring = this.add.circle(
+      this.hero.x, this.hero.y - 20,
+      20, color, 0.12
+    ).setStrokeStyle(6, color).setDepth(15000);
+
+    this.tweens.add({
+      targets: ring,
+      scaleX: radius / 20, scaleY: radius / 20,
+      alpha: 0, duration: 330,
+      onComplete: () => ring.destroy()
+    });
+
+    for (const e of [...this.enemies]) {
+      if (e.dead) continue;
+      const dx = e.sprite.x - this.hero.x;
+      const dy = e.sprite.y - this.hero.y;
+      const d = Math.hypot(dx, dy);
+      if (d < radius) {
+        const hit = this.rollDamage(mult, e);
+        this.damageEnemy(e, hit.damage,
+          d ? dx / d : 1, d ? dy / d : 0, hit.crit);
+      }
     }
   }
 
@@ -1819,11 +2388,13 @@ class QuarterRPG extends Phaser3.Scene {
       const dist = Math.hypot(dx, dy);
 
       if (dist < 230) {
+        const hit = this.rollDamage(3.6, enemy);
         this.damageEnemy(
           enemy,
-          65 + this.sword * 12,
+          hit.damage,
           dist ? dx / dist : 1,
-          dist ? dy / dist : 0
+          dist ? dy / dist : 0,
+          hit.crit
         );
       }
     }
@@ -1898,9 +2469,9 @@ class QuarterRPG extends Phaser3.Scene {
             dist < (enemy.boss ? 150 : 83) &&
             !safe
           ) {
-            this.hurtHero(
-              enemy.boss ? 22 : 9
-            );
+            this.hurtHero(Math.round(
+              (enemy.boss ? 22 : 9) * enemy.dmgScale
+            ));
           }
         }
       } else {
@@ -2037,9 +2608,9 @@ class QuarterRPG extends Phaser3.Scene {
       ) {
         enemy.lastAttack = now;
 
-        this.hurtHero(
-          enemy.type === "boar" ? 6 : 4
-        );
+        this.hurtHero(Math.round(
+          (enemy.type === "boar" ? 6 : 4) * enemy.dmgScale
+        ));
       }
     }
   }
@@ -2084,8 +2655,9 @@ class QuarterRPG extends Phaser3.Scene {
     );
 
     this.hudText.setText(
-      `LV.${this.level}  HP ${this.hp}/${this.maxHp}\n` +
-      `\n\nGold ${this.gold}  Gems ${this.gems}`
+      `LV.${this.level}  HP ${this.hp}/${this.maxHp}` +
+      `   ⚡${this.stats.power.toLocaleString("en-US")}\n` +
+      `\n\nGold ${this.gold.toLocaleString("en-US")}  Gems ${this.gems}`
     );
 
     this.potionButton.setText(
@@ -2146,6 +2718,17 @@ class QuarterRPG extends Phaser3.Scene {
       y = 0;
     }
 
+    let autoAttack = false;
+    if (
+      this.auto && !this.panelMode &&
+      Math.hypot(x, y) < 0.1
+    ) {
+      const a = this.autoControl(now);
+      x = a.x;
+      y = a.y;
+      autoAttack = !!a.attack;
+    }
+
     const magnitude = Math.hypot(x, y);
 
     if (magnitude > 1) {
@@ -2153,7 +2736,7 @@ class QuarterRPG extends Phaser3.Scene {
       y /= magnitude;
     }
 
-    const speed = this.attacking ? 105 : 220;
+    const speed = (this.attacking ? 105 : 220) * (1 + this.stats.move);
 
     this.hero.setVelocity(
       x * speed, y * speed
@@ -2171,6 +2754,7 @@ class QuarterRPG extends Phaser3.Scene {
       if (now >= this.attackEnd) {
         this.attacking = false;
         this.currentAnimation = "";
+        this.hero.anims.timeScale = 1;
       }
     }
 
@@ -2192,14 +2776,25 @@ class QuarterRPG extends Phaser3.Scene {
 
     if (
       !this.panelMode &&
-      (this.attackHeld || this.keys.SPACE.isDown) &&
+      (this.attackHeld || this.keys.SPACE.isDown || autoAttack) &&
       !this.attacking &&
-      now - this.lastAttack > 290
+      now - this.lastAttack > 290 / this.attackSpeed()
     ) {
       this.attack();
     }
 
     this.updateEnemies(now);
+    this.updateLoot(now);
+    if (!this.scene.isActive()) return;
+
+    const frenzy = now < this.frenzyUntil;
+    this.frenzyAura.setVisible(frenzy);
+    if (frenzy) {
+      this.frenzyAura
+        .setPosition(this.hero.x, this.hero.y)
+        .setDepth(this.hero.y - 2)
+        .setScale(1 + Math.sin(now / 60) * 0.12);
+    }
 
     for (let i = this.drops.length - 1; i >= 0; i--) {
       const drop = this.drops[i];
@@ -2216,7 +2811,11 @@ class QuarterRPG extends Phaser3.Scene {
 
       if (dist < 25) {
         if (drop.gem) this.gems++;
-        else this.gold += 5;
+        else {
+          this.gold += Math.round(
+            (4 + (drop.lv || 1)) * (1 + this.stats.goldFind)
+          );
+        }
 
         obj.destroy();
         this.drops.splice(i, 1);
@@ -2247,11 +2846,13 @@ class QuarterRPG extends Phaser3.Scene {
       this.saveGame();
     }
 
+    this.talkButton.setVisible(!!this.nearestNPC());
+
     this.updateHUD();
   }
 }
 
-new Phaser3.Game({
+window.quarterGame = new Phaser3.Game({
   type: Phaser3.AUTO,
   parent: "game",
   backgroundColor: "#172b3a",
